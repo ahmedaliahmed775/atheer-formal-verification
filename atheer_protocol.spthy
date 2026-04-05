@@ -4,25 +4,9 @@
  * ============================================================================
  *
  * Protocol:   Atheer Offline-First Mobile Payment Protocol (V2)
- * Version:    2.0.0
+ * Version:    2.0.1 (Security Patched)
  * Tool:       Tamarin Prover (>= 1.6.0)
  * Model:      Dolev-Yao Adversary (Full Symbolic Attacker)
- *
- * ARCHITECTURE OVERVIEW (V2 UPDATES)
- * ----------------------------------
- * This model applies the latest rapid-deployment architectural shifts:
- *
- *   1. Master Seed & HKDF: Switch no longer issues batches of LUKs. It 
- *      issues one encrypted Master Seed. TEE derives LUKs using HKDF.
- *   2. Offline Limits: A predefined max limit is issued alongside the seed.
- *      The TEE enforces the limit bounds before signing.
- *   3. MPC Dual-Signing: PABC requires signatures from both TEE (sk_tee) 
- *      and SIM (sk_sim) applets to prevent root-only extractions.
- *   4. Distance Bounding (RTT): Emulated through logical restrictions preventing 
- *      long-term relay delays.
- *   5. Monotonic Counters: Hardware-backed incremental counters replace timestamps.
- *   6. Revocation: Explicit mathematical rules for Seed revocation upon theft.
- *   7. Play Integrity: Modeled as a pre-requisite fact before session arming.
  *
  * ============================================================================
  */
@@ -63,14 +47,15 @@ functions:
     apdu_build/4,           
     apdu_extract_token/1,   
     apdu_extract_sig/1,     
-    charge_request/4,       
+    charge_request/4,       /* charge_request(apdu, merchant_id, tx_nonce, sig) */
     
     /* ---- Cryptographic / Abstract basics --------------------------------- */
     nonce_fresh/1,          
     ts_within_window/2,     
     registry_lookup_tee/2,  
     registry_lookup_sim/2,  
-    settle_ack/2            
+    settle_ack/2,           /* settle_ack(tx_id, status) */
+    true/0
 
 equations:
     tee_unlock(tee_lock(k, bio), bio) = k,
@@ -105,10 +90,13 @@ restriction Enforce_Offline_Limits:
     "All amt limit #t. OfflineLimitChecked(amt, limit) @ #t ==>
         Ex client_id seed #tp. SwitchIssuedSeed(client_id, seed, limit) @ #tp & #tp < #t"
 
-/* Distance Bounding: RTT strictly limits temporal gaps, modeled by asserting 
-   local proximity delivery constraints conceptually */
+/* Distance Bounding: RTT strictly limits temporal gaps */
 restriction Distance_Bounding_RTT:
-    "All #ta #tr. ClientSentAPDU() @ #ta & MerchantReceivedAPDU() @ #tr ==> #ta < #tr /* Abstract representation of RTT */"
+    "All #ta #tr. ClientSentAPDU() @ #ta & MerchantReceivedAPDU() @ #tr ==> #ta < #tr"
+
+/* Equality check for verification */
+restriction Equality:
+    "All x y #i. Eq(x,y) @ #i ==> x = y"
 
 /* =========================================================================
  * PHASE 1 — DEVICE PROVISIONING & MASTER SEED
@@ -121,18 +109,23 @@ rule System_PlayIntegrity_Check:
 
 rule TEE_KeyGen:
     [ Fr(~device_id), Fr(~sk_tee) ]
-  --[ TEEKeyGenerated(~device_id, pk(~sk_tee)), OnlyOnce('TEE_KeyGen') ]->
+  --[ TEEKeyGenerated(~device_id, pk(~sk_tee)) ]->
     [ !TEE_PrivKey(~device_id, ~sk_tee), !TEE_PubKey(~device_id, pk(~sk_tee)), Out(pk(~sk_tee)) ]
 
 rule SIM_KeyGen:
     [ Fr(~device_id), Fr(~sk_sim) ]
-  --[ SIMKeyGenerated(~device_id, pk(~sk_sim)), OnlyOnce('SIM_KeyGen') ]->
+  --[ SIMKeyGenerated(~device_id, pk(~sk_sim)) ]->
     [ !SIM_PrivKey(~device_id, ~sk_sim), !SIM_PubKey(~device_id, pk(~sk_sim)), Out(pk(~sk_sim)) ]
 
 rule Merchant_KeyGen:
     [ Fr(~merchant_id), Fr(~sk_merch) ]
   --[ MerchantRegistered(~merchant_id) ]->
     [ !Merchant_PrivKey(~merchant_id, ~sk_merch), !Merchant_PubKey(~merchant_id, pk(~sk_merch)), Out(pk(~sk_merch)) ]
+
+rule Switch_KeyGen:
+    [ Fr(~sk_switch) ]
+  --[ SwitchRegistered() ]->
+    [ !Switch_PrivKey(~sk_switch), !Switch_PubKey(pk(~sk_switch)), Out(pk(~sk_switch)) ]
 
 rule Switch_Register_Client_V2:
     [ In(pk_tee), In(pk_sim), Fr(~client_id) ]
@@ -148,7 +141,7 @@ rule Switch_Provision_MasterSeed:
 
 rule Client_Store_Seed:
     [ In(enc_seed), In(enc_lim), !TEE_PrivKey(device_id, sk_tee) ]
-  --[ ClientStoredSeed(device_id) ]->
+  --[ ClientStoredSeed(device_id, adec(enc_seed, sk_tee)) ]->
     [ !Client_Vault_Seed(device_id, adec(enc_seed, sk_tee)),
       !Client_Vault_Limit(device_id, adec(enc_lim, sk_tee)) ]
 
@@ -209,26 +202,45 @@ rule Merchant_Send_ChargeRequest:
 rule Switch_Verify_And_Settle_V2:
     let
         cr = charge_request(apdu_in, mid, nonce_cr, merch_sig)
-        token = apdu_extract_token(apdu_in)
-        pabc_in = apdu_extract_sig(apdu_in)
+        luk_in = apdu_extract_token(apdu_in)
+        sig_in = apdu_extract_sig(apdu_in)
+        /* Reconstruct PABC message for verification */
+        /* In a real implementation, Switch would derive the same PABC fields */
+        pabc_msg = pabc_construct(luk_in, nonce_pabc, hw_counter, amount, mid)
+        /* Secure ACK: Signed by Switch */
+        ack_msg = settle_ack(~tx_id, 'SUCCESS')
+        secure_ack = <ack_msg, sign(ack_msg, sk_switch)>
     in
     [ In(cr), 
       !Switch_Registry(client_id, pk_tee, pk_sim), 
       !Switch_Seed_DB(client_id, master_seed, limit), 
       !Merchant_PubKey(mid, pk_merch), 
+      !Switch_PrivKey(sk_switch),
       Fr(~tx_id) ]
   --[ 
-      SwitchVerifiedPABC(client_id, token, pabc_in, pk_tee, pk_sim),
+      /* SECURITY FIX: Explicit MPC Verification */
+      Eq(mpc_verify(sig_in, pabc_msg, pk_tee, pk_sim), true),
+      SwitchVerifiedPABC(client_id, luk_in, sig_in, pk_tee, pk_sim),
       SwitchAcceptedNonce(nonce_cr),
       SwitchSettled(mid, ~tx_id),
-      TransactionSettled(client_id, mid, token, ~tx_id)
+      TransactionSettled(client_id, mid, luk_in, ~tx_id)
     ]->
-    [ Out(settle_ack(~tx_id, 'SUCCESS')), !Switch_Settle_Ack(~tx_id, apdu_in) ]
+    [ Out(secure_ack) ]
 
 /* STRICT ONLINE REQUIREMENT: Merchant cannot consider transaction complete until Switch replies. */
 rule Merchant_Receive_Ack_And_Complete:
-    [ In(settle_ack(tx_id, 'SUCCESS')), !Switch_Settle_Ack(tx_id, apdu), MerchantHoldsChargeRequest(mid, cr) ]
-  --[ MerchantAcceptedPayment(mid, apdu) ]->
+    let
+        ack_msg = settle_ack(tx_id, 'SUCCESS')
+        secure_ack = <ack_msg, switch_sig>
+    in
+    [ In(secure_ack), 
+      !Switch_PubKey(pk_switch),
+      MerchantHoldsChargeRequest(mid, charge_request(apdu, mid, tx_nonce, merch_sig)) ]
+  --[ 
+      /* SECURITY FIX: Verify Switch Signature on ACK */
+      Eq(verify(switch_sig, ack_msg, pk_switch), true),
+      MerchantAcceptedPayment(mid, apdu) 
+    ]->
     [ MerchantFinished(mid, apdu) ]
 
 /* REVOCATION MODEL: Client reports stolen phone, Switch drops the Seed */
@@ -236,8 +248,6 @@ rule Switch_Revoke_Device:
     [ !Switch_Seed_DB(client_id, master_seed, limit) ]
   --[ DeviceRevoked(client_id, master_seed) ]->
     [ !RevokedSeeds(master_seed) ] 
-    /* By generating this, we model that subsequent Switch_Verify rules would fail 
-       if we required absence of RevokedSeeds(master_seed), ensuring complete cut-off. */
 
 
 /* =========================================================================
@@ -252,8 +262,7 @@ lemma Authentication_V2:
 
 lemma Secret_Master_Seed:
     "All device_id seed #tc.
-        ClientStoredSeed(device_id) @ #tc
-        & !Client_Vault_Seed(device_id, seed) @ #tv
+        ClientStoredSeed(device_id, seed) @ #tc
         ==>
         not (Ex #tx. KU(seed) @ #tx)"
 
