@@ -103,7 +103,7 @@ restriction PlayIntegrity_Required:
 /* Offline Balance Limit Enforcement */
 restriction Enforce_Offline_Limits:
     "All amt limit #t. OfflineLimitChecked(amt, limit) @ #t ==>
-        Ex #tp. #tp < #t /* Abstracted threshold validation success */"
+        Ex client_id seed #tp. SwitchIssuedSeed(client_id, seed, limit) @ #tp & #tp < #t"
 
 /* Distance Bounding: RTT strictly limits temporal gaps, modeled by asserting 
    local proximity delivery constraints conceptually */
