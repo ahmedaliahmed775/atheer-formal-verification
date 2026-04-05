@@ -108,7 +108,7 @@ restriction Enforce_Offline_Limits:
 /* Distance Bounding: RTT strictly limits temporal gaps, modeled by asserting 
    local proximity delivery constraints conceptually */
 restriction Distance_Bounding_RTT:
-    "All #ta #tr. ClientSentAPDU() @ #ta & MerchantReceivedAPDU() @ #tr ==> #tr > #ta /* Abstract representation of RTT */"
+    "All #ta #tr. ClientSentAPDU() @ #ta & MerchantReceivedAPDU() @ #tr ==> #ta < #tr /* Abstract representation of RTT */"
 
 /* =========================================================================
  * PHASE 1 — DEVICE PROVISIONING & MASTER SEED
