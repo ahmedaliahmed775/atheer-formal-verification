@@ -63,7 +63,7 @@ functions:
     apdu_build/4,           
     apdu_extract_token/1,   
     apdu_extract_sig/1,     
-    charge_request/5,       
+    charge_request/4,       
     
     /* ---- Cryptographic / Abstract basics --------------------------------- */
     nonce_fresh/1,          
