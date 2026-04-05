@@ -1,0 +1,33 @@
+name: Formal Verification (Tamarin Prover)
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch: # يتيح لك تشغيل الفحص يدوياً بضغطة زر من جيتهاب
+
+jobs:
+  verify-protocol:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Code (سحب كود البروتوكول)
+        uses: actions/checkout@v4
+
+      - name: Pull Tamarin Docker Image (تحميل بيئة تامارين)
+        run: docker pull lmandrelli/tamarin-prover
+
+      - name: Run Mathematical Proofs (بدء التحقق الرياضي)
+        run: |
+          echo "بدء عملية الفحص الرياضي الشامل لملف atheer_protocol.spthy"
+          docker run --rm -v ${{ github.workspace }}:/data -w /data lmandrelli/tamarin-prover tamarin-prover atheer_protocol.spthy --prove > proof_report.txt
+          
+          # طباعة ملخص النتائج في سجل أفعال جيتهاب
+          cat proof_report.txt
+
+      - name: Upload Proof Artifact (حفظ تقرير الإثبات النهائي)
+        uses: actions/upload-artifact@v4
+        with:
+          name: tamarin-formal-proof-results
+          path: proof_report.txt
