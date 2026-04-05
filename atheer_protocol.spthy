@@ -97,7 +97,7 @@ restriction Nonce_Uniqueness:
 
 /* Play Integrity must be validated BEFORE creating a session */
 restriction PlayIntegrity_Required:
-    "All dev_id sid #ts. SessionArmed(sid) @ #ts ==>
+    "All dev_id sid #ts. SessionArmed(dev_id, sid) @ #ts ==>
         Ex #ti. PlayIntegrityVerified(dev_id) @ #ti & #ti < #ts"
 
 /* Offline Balance Limit Enforcement */
@@ -158,7 +158,7 @@ rule Client_Store_Seed:
 
 rule Client_Biometric_Auth:
     [ !TEE_PrivKey(device_id, sk_tee), !PlayIntegrityState(device_id), Fr(~session_id) ]
-  --[ BiometricVerified(device_id, ~session_id), SessionArmed(~session_id) ]->
+  --[ BiometricVerified(device_id, ~session_id), SessionArmed(device_id, ~session_id) ]->
     [ ArmedSession(device_id, ~session_id, sk_tee) ]
 
 rule Client_Send_APDU_V2:
