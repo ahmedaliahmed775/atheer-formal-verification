@@ -115,40 +115,40 @@ restriction Distance_Bounding_RTT:
  * ========================================================================= */
 
 rule System_PlayIntegrity_Check:
-    [ Fr(~attestation_nonce) ]
-  --[ PlayIntegrityVerified(~device_id) ]-->
+    [ Fr(~attestation_nonce), Fr(~device_id) ]
+  --[ PlayIntegrityVerified(~device_id) ]->
     [ !PlayIntegrityState(~device_id) ]
 
 rule TEE_KeyGen:
     [ Fr(~device_id), Fr(~sk_tee) ]
-  --[ TEEKeyGenerated(~device_id, pk(~sk_tee)), OnlyOnce('TEE_KeyGen') ]-->
+  --[ TEEKeyGenerated(~device_id, pk(~sk_tee)), OnlyOnce('TEE_KeyGen') ]->
     [ !TEE_PrivKey(~device_id, ~sk_tee), !TEE_PubKey(~device_id, pk(~sk_tee)), Out(pk(~sk_tee)) ]
 
 rule SIM_KeyGen:
-    [ Fr(~sk_sim) ]
-  --[ SIMKeyGenerated(~device_id, pk(~sk_sim)), OnlyOnce('SIM_KeyGen') ]-->
+    [ Fr(~device_id), Fr(~sk_sim) ]
+  --[ SIMKeyGenerated(~device_id, pk(~sk_sim)), OnlyOnce('SIM_KeyGen') ]->
     [ !SIM_PrivKey(~device_id, ~sk_sim), !SIM_PubKey(~device_id, pk(~sk_sim)), Out(pk(~sk_sim)) ]
 
 rule Merchant_KeyGen:
     [ Fr(~merchant_id), Fr(~sk_merch) ]
-  --[ MerchantRegistered(~merchant_id) ]-->
+  --[ MerchantRegistered(~merchant_id) ]->
     [ !Merchant_PrivKey(~merchant_id, ~sk_merch), !Merchant_PubKey(~merchant_id, pk(~sk_merch)), Out(pk(~sk_merch)) ]
 
 rule Switch_Register_Client_V2:
     [ In(pk_tee), In(pk_sim), Fr(~client_id) ]
-  --[ SwitchRegisteredClient(~client_id, pk_tee, pk_sim) ]-->
+  --[ SwitchRegisteredClient(~client_id, pk_tee, pk_sim) ]->
     [ !Switch_Registry(~client_id, pk_tee, pk_sim) ]
 
 /* V2 Change: Switch provisions a single Seed and an offline Limit, encrypted */
 rule Switch_Provision_MasterSeed:
     [ !Switch_Registry(client_id, pk_tee, pk_sim), Fr(~master_seed), Fr(~offline_limit) ]
-  --[ SwitchIssuedSeed(client_id, ~master_seed, ~offline_limit) ]-->
+  --[ SwitchIssuedSeed(client_id, ~master_seed, ~offline_limit) ]->
     [ !Switch_Seed_DB(client_id, ~master_seed, ~offline_limit),
       Out(aenc(~master_seed, pk_tee)), Out(aenc(~offline_limit, pk_tee)) ]
 
 rule Client_Store_Seed:
     [ In(enc_seed), In(enc_lim), !TEE_PrivKey(device_id, sk_tee) ]
-  --[ ClientStoredSeed(device_id) ]-->
+  --[ ClientStoredSeed(device_id) ]->
     [ !Client_Vault_Seed(device_id, adec(enc_seed, sk_tee)),
       !Client_Vault_Limit(device_id, adec(enc_lim, sk_tee)) ]
 
@@ -158,7 +158,7 @@ rule Client_Store_Seed:
 
 rule Client_Biometric_Auth:
     [ !TEE_PrivKey(device_id, sk_tee), !PlayIntegrityState(device_id), Fr(~session_id) ]
-  --[ BiometricVerified(device_id, ~session_id), SessionArmed(~session_id) ]-->
+  --[ BiometricVerified(device_id, ~session_id), SessionArmed(~session_id) ]->
     [ ArmedSession(device_id, ~session_id, sk_tee) ]
 
 rule Client_Send_APDU_V2:
@@ -189,12 +189,12 @@ rule Client_Send_APDU_V2:
       OfflineLimitChecked(amount, max_limit),
       UsedCounter(~hw_counter),
       Secret(seed)
-    ]-->
+    ]->
     [ Out(apdu) ]
 
 rule Merchant_Receive_APDU:
     [ In(apdu), !Merchant_PrivKey(merchant_id, sk_merch), Fr(~tx_nonce) ]
-  --[ MerchantReceivedAPDU() ]-->
+  --[ MerchantReceivedAPDU() ]->
     [ MerchantHoldsChargeRequest(merchant_id, charge_request(apdu, merchant_id, ~tx_nonce, sign(h(apdu), sk_merch))) ]
 
 /* =========================================================================
@@ -203,7 +203,7 @@ rule Merchant_Receive_APDU:
 
 rule Merchant_Send_ChargeRequest:
     [ MerchantHoldsChargeRequest(merchant_id, cr) ]
-  --[ MerchantSentChargeRequest(merchant_id, cr) ]-->
+  --[ MerchantSentChargeRequest(merchant_id, cr) ]->
     [ Out(cr) ]
 
 rule Switch_Verify_And_Settle_V2:
@@ -222,19 +222,19 @@ rule Switch_Verify_And_Settle_V2:
       SwitchAcceptedNonce(nonce_cr),
       SwitchSettled(mid, ~tx_id),
       TransactionSettled(client_id, mid, token, ~tx_id)
-    ]-->
+    ]->
     [ Out(settle_ack(~tx_id, 'SUCCESS')), !Switch_Settle_Ack(~tx_id, apdu_in) ]
 
 /* STRICT ONLINE REQUIREMENT: Merchant cannot consider transaction complete until Switch replies. */
 rule Merchant_Receive_Ack_And_Complete:
     [ In(settle_ack(tx_id, 'SUCCESS')), !Switch_Settle_Ack(tx_id, apdu), MerchantHoldsChargeRequest(mid, cr) ]
-  --[ MerchantAcceptedPayment(mid, apdu) ]-->
+  --[ MerchantAcceptedPayment(mid, apdu) ]->
     [ MerchantFinished(mid, apdu) ]
 
 /* REVOCATION MODEL: Client reports stolen phone, Switch drops the Seed */
 rule Switch_Revoke_Device:
     [ !Switch_Seed_DB(client_id, master_seed, limit) ]
-  --[ DeviceRevoked(client_id, master_seed) ]-->
+  --[ DeviceRevoked(client_id, master_seed) ]->
     [ !RevokedSeeds(master_seed) ] 
     /* By generating this, we model that subsequent Switch_Verify rules would fail 
        if we required absence of RevokedSeeds(master_seed), ensuring complete cut-off. */
