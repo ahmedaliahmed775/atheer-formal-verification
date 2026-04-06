@@ -44,7 +44,7 @@ env:
 
 jobs:
   # ===========================================================
-  # JOB 1: التحقق من صحة بناء الجملة (syntax check سريع)
+  # JOB 1: التحقق من صحة بناء الجمل (syntax check سريع)
   # ===========================================================
   syntax-check:
     name: '🔍 فحص بناء الجملة'
@@ -76,6 +76,7 @@ jobs:
             MAUDE_BIN=$(find maude_bin -name "maude*" -type f -executable 2>/dev/null | head -1)
             if [ -n "$MAUDE_BIN" ]; then
               sudo cp "$MAUDE_BIN" /usr/local/bin/maude
+              sudo cp $(dirname "$MAUDE_BIN")/*.maude /usr/local/bin/ 2>/dev/null || true
               sudo chmod +x /usr/local/bin/maude
               echo "✅ Maude مُثبَّت من الأرشيف"
             fi
@@ -159,7 +160,7 @@ jobs:
           echo "## 🔍 ملخص فحص بناء الجملة" >> $GITHUB_STEP_SUMMARY
           echo "| المقياس | القيمة |" >> $GITHUB_STEP_SUMMARY
           echo "|---------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| الملف | \`atheer_protocol.spthy\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| الملف | \\`atheer_protocol.spthy\\` |" >> $GITHUB_STEP_SUMMARY
           echo "| عدد الأسطر | $(wc -l < atheer_protocol.spthy) |" >> $GITHUB_STEP_SUMMARY
           echo "| عدد القواعد | $(grep -c '^rule ' atheer_protocol.spthy) |" >> $GITHUB_STEP_SUMMARY
           echo "| عدد البراهين | $(grep -c '^lemma ' atheer_protocol.spthy) |" >> $GITHUB_STEP_SUMMARY
@@ -187,7 +188,7 @@ jobs:
           if [ -f maude.zip ]; then
             unzip -q maude.zip -d maude_bin || true
             MAUDE_BIN=$(find maude_bin -name "maude*" -type f -executable 2>/dev/null | head -1)
-            [ -n "$MAUDE_BIN" ] && sudo cp "$MAUDE_BIN" /usr/local/bin/maude && sudo chmod +x /usr/local/bin/maude
+            [ -n "$MAUDE_BIN" ] && sudo cp "$MAUDE_BIN" /usr/local/bin/maude && sudo cp $(dirname "$MAUDE_BIN")/*.maude /usr/local/bin/ 2>/dev/null && sudo chmod +x /usr/local/bin/maude
             rm -rf maude.zip maude_bin
           fi
           command -v maude &>/dev/null || sudo apt-get install -y maude 2>/dev/null || true
@@ -228,7 +229,7 @@ jobs:
           path: proofs/
 
   # ===========================================================
-  # JOB 3: إثبات البراهين الأمنية الكاملة (9 براهين — متوازٍ)
+  # JOB 3: إثبات البراهين الأم��ية الكاملة (9 براهين — متوازٍ)
   # ===========================================================
   verify-security-lemmas:
     name: '🔐 إثبات — ${{ matrix.lemma }}'
@@ -261,7 +262,7 @@ jobs:
           if [ -f maude.zip ]; then
             unzip -q maude.zip -d maude_bin || true
             MAUDE_BIN=$(find maude_bin -name "maude*" -type f -executable 2>/dev/null | head -1)
-            [ -n "$MAUDE_BIN" ] && sudo cp "$MAUDE_BIN" /usr/local/bin/maude && sudo chmod +x /usr/local/bin/maude
+            [ -n "$MAUDE_BIN" ] && sudo cp "$MAUDE_BIN" /usr/local/bin/maude && sudo cp $(dirname "$MAUDE_BIN")/*.maude /usr/local/bin/ 2>/dev/null && sudo chmod +x /usr/local/bin/maude
             rm -rf maude.zip maude_bin
           fi
           command -v maude &>/dev/null || sudo apt-get install -y maude 2>/dev/null || true
@@ -286,7 +287,7 @@ jobs:
             2>&1 | tee proofs/${{ matrix.lemma }}_result.txt
 
           if grep -q "verified" proofs/${{ matrix.lemma }}_result.txt; then
-            echo "✅ ${{ matrix.lemma }}: مُثبَت بنجاح"
+            echo "✅ ${{ matrix.lemma }}: مُثبَت بنجا��"
             echo "## ${{ matrix.lemma }}: ✅ مُثبَت" >> $GITHUB_STEP_SUMMARY
           else
             echo "❌ ${{ matrix.lemma }}: فشل الإثبات"
@@ -323,7 +324,7 @@ jobs:
           if [ -f maude.zip ]; then
             unzip -q maude.zip -d maude_bin || true
             MAUDE_BIN=$(find maude_bin -name "maude*" -type f -executable 2>/dev/null | head -1)
-            [ -n "$MAUDE_BIN" ] && sudo cp "$MAUDE_BIN" /usr/local/bin/maude && sudo chmod +x /usr/local/bin/maude
+            [ -n "$MAUDE_BIN" ] && sudo cp "$MAUDE_BIN" /usr/local/bin/maude && sudo cp $(dirname "$MAUDE_BIN")/*.maude /usr/local/bin/ 2>/dev/null && sudo chmod +x /usr/local/bin/maude
             rm -rf maude.zip maude_bin
           fi
           command -v maude &>/dev/null || sudo apt-get install -y maude 2>/dev/null || true
@@ -389,8 +390,10 @@ jobs:
           echo "# 📋 تقرير التحقق الرسمي — Atheer Protocol v2.0" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**التاريخ:** $(date -u '+%Y-%m-%d %H:%M UTC')" >> $GITHUB_STEP_SUMMARY
-          echo "**الـ Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "**الـ Branch:** \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**الـ Commit:** \
+{$}**" >> $GITHUB_STEP_SUMMARY
+          echo "**الـ Branch:** \
+{$}**" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "## نتائج البراهين" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -415,10 +418,10 @@ jobs:
             TOTAL=$((TOTAL+1))
             result_file="all-proofs/proof-${lemma}/${lemma}_result.txt"
             if [ -f "$result_file" ] && grep -q "verified" "$result_file"; then
-              echo "| \`$lemma\` | ✅ مُثبَت | ${ENHANCEMENT[$lemma]:-—} |" >> $GITHUB_STEP_SUMMARY
+              echo "| \\`$lemma\\` | ✅ مُثبَت | ${ENHANCEMENT[$lemma]:-—} |" >> $GITHUB_STEP_SUMMARY
               PASSED=$((PASSED+1))
             else
-              echo "| \`$lemma\` | ❌ فشل أو غير مكتمل | ${ENHANCEMENT[$lemma]:-—} |" >> $GITHUB_STEP_SUMMARY
+              echo "| \\`$lemma\\` | ❌ فشل أو غير مكتمل | ${ENHANCEMENT[$lemma]:-—} |" >> $GITHUB_STEP_SUMMARY
             fi
           done
 
@@ -428,10 +431,10 @@ jobs:
           echo "## التحسينات المُتحقَّق منها" >> $GITHUB_STEP_SUMMARY
           echo "| # | التحسين | الـ Lemma المرتبط |" >> $GITHUB_STEP_SUMMARY
           echo "|---|---------|-----------------|" >> $GITHUB_STEP_SUMMARY
-          echo "| 1 | سلسلة الثقة (Chain of Trust) | \`Seed_Secrecy\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| 2 | تحديد المسافة (Distance Bounding) | \`Distance_Bounding\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| 3 | نزاهة الجهاز (Play Integrity) | \`Device_Integrity\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| 4 | التوقيت الذري (HW Counter) | \`Counter_Monotonicity\` + \`Session_Integrity\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| 1 | سلسلة الثقة (Chain of Trust) | \\`Seed_Secrecy\\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| 2 | تحديد المسافة (Distance Bounding) | \\`Distance_Bounding\\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| 3 | نزاهة الجهاز (Play Integrity) | \\`Device_Integrity\\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| 4 | التوقيت الذري (HW Counter) | \\`Counter_Monotonicity\\` + \\`Session_Integrity\\` |" >> $GITHUB_STEP_SUMMARY
 
       - name: رفع التقرير الموحد
         uses: actions/upload-artifact@v4
