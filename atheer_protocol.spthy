@@ -199,7 +199,7 @@ rule Switch_Provision_Seed:
     , Fr(~seed_id) ]
   --[ SeedProvisioned(device_id)
     , SwitchIssuedSeed(~seed_id, cid, ~master_seed) ]-> 
-    [ !Seed_Registry(~seed_id, cid, ~ms)
+    [ !Seed_Registry(~seed_id, cid, ~master_seed)
     , Out(seed_encrypt(~master_seed, pk_client)) ]
 
 rule Client_Seal_Seed:
