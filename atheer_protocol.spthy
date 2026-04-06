@@ -6,7 +6,7 @@
  * Protocol:   Atheer Offline-First Mobile Payment Protocol
  * Version:    2.0.0
  * Authors:    Ahmed Al-Mutawakel, Nabil Al-Mekhlafi, Bilal Al-Fahidi
- *             University of Science and Technology, Sana'a, Yemen
+ * University of Science and Technology, Sana'a, Yemen
  * Tool:       Tamarin Prover (>= 1.6.1)
  * Model:      Dolev-Yao Adversary — Full Symbolic Attacker
  *
@@ -15,42 +15,42 @@
  * ============================================================================
  *
  * 1. CHAIN OF TRUST — Dynamic LUK Derivation (replaces batch provisioning)
- *    One TEE-sealed Master Seed (ms) stored permanently. Each LUK is derived
- *    on-demand:  LUK_i = PRF(ms, counter_i)
- *    A monotonic hardware counter (TEE_counter) tracks derivations so the
- *    adversary cannot rewind the counter to re-derive a spent token.
+ * One TEE-sealed Master Seed (ms) stored permanently. Each LUK is derived
+ * on-demand:  LUK_i = PRF(ms, counter_i)
+ * A monotonic hardware counter (TEE_counter) tracks derivations so the
+ * adversary cannot rewind the counter to re-derive a spent token.
  *
  * 2. DISTANCE BOUNDING (NFC round-trip timing)
- *    The merchant issues a fresh timing challenge (db_chall). The client
- *    returns a signed response within a tight timing window (modeled as
- *    a restriction: response must occur in the same "round" as challenge).
- *    This defeats relay attacks that introduce measurable network latency.
+ * The merchant issues a fresh timing challenge (db_chall). The client
+ * returns a signed response within a tight timing window (modeled as
+ * a restriction: response must occur in the same "round" as challenge).
+ * This defeats relay attacks that introduce measurable network latency.
  *
  * 3. DEVICE INTEGRITY via Play Integrity API
- *    Before any provisioning, the Switch verifies a Play Integrity Token
- *    (pi_token) signed by Google's attestation root. Only devices passing
- *    this check receive Master Seeds. Emulators and rooted devices are
- *    excluded at the attestation layer.
+ * Before any provisioning, the Switch verifies a Play Integrity Token
+ * (pi_token) signed by Google's attestation root. Only devices passing
+ * this check receive Master Seeds. Emulators and rooted devices are
+ * excluded at the attestation layer.
  *
  * 4. ATOMIC HARDWARE TIMING (Monotonic Counter for Armed Session)
- *    The 60-second Armed Session is bound to a hardware monotonic counter
- *    value (hw_ctr_start) rather than the Android system clock. The session
- *    is valid only if the current counter value is within [start, start+W].
- *    Adversarial clock manipulation cannot extend the signing window.
+ * The 60-second Armed Session is bound to a hardware monotonic counter
+ * value (hw_ctr_start) rather than the Android system clock. The session
+ * is valid only if the current counter value is within [start, start+W].
+ * Adversarial clock manipulation cannot extend the signing window.
  *
  * ============================================================================
  * SECURITY PROPERTIES (10 LEMMAS)
  * ============================================================================
- *   L1.  Authentication             — Settlement implies genuine client APDU
- *   L2.  Anti_Replay                — (LUK, Nonce) accepted at most once
- *   L3.  Session_Integrity          — PABC bound to hardware-timed window
- *   L4.  Seed_Secrecy               — Master Seed never learnable by adversary
- *   L5.  Distance_Bounding          — Settlement implies proximity proof
- *   L6.  Device_Integrity           — Only attested devices receive seeds
- *   L7.  Counter_Monotonicity       — Hardware counter cannot be rewound
- *   L8.  Merchant_ZeroKnowledge     — SoftPOS cannot extract client secrets
- *   L9.  Switch_NonFrameability     — Switch never settles without verified sig
- *   L10. Executability              — (Sanity) At least one valid trace exists
+ * L1.  Authentication             — Settlement implies genuine client APDU
+ * L2.  Anti_Replay                — (LUK, Nonce) accepted at most once
+ * L3.  Session_Integrity          — PABC bound to hardware-timed window
+ * L4.  Seed_Secrecy               — Master Seed never learnable by adversary
+ * L5.  Distance_Bounding          — Settlement implies proximity proof
+ * L6.  Device_Integrity           — Only attested devices receive seeds
+ * L7.  Counter_Monotonicity       — Hardware counter cannot be rewound
+ * L8.  Merchant_ZeroKnowledge     — SoftPOS cannot extract client secrets
+ * L9.  Switch_NonFrameability     — Switch never settles without verified sig
+ * L10. Executability              — (Sanity) At least one valid trace exists
  * ============================================================================
  */
 
@@ -105,10 +105,7 @@ functions:
     pabc_construct/6,        /* pabc(luk, nonce, hw_ctr, amount, mid, db_prf)  */
 
     /* ---- APDU & ChargeRequest ------------------------------------------- */
-    apdu_build/5,            /* apdu(luk, amount, atc, pabc, db_proof)        */
-    apdu_extract_luk/1,
-    apdu_extract_pabc/1,
-    apdu_extract_db/1,
+    apdu_build/7,            /* apdu(luk, amount, atc, hw_ctr, nonce, pabc_sig, db_proof) */
     charge_request/5,        /* charge_request(apdu, mid, hw_ctr, nonce, sig) */
 
     /* ---- AES-256-GCM ----------------------------------------------------- */
@@ -116,7 +113,6 @@ functions:
     aes_dec/3,
 
     /* ---- Registry & Settlement ------------------------------------------ */
-    registry_lookup/2,
     settle_ack/2,
 
     /* ---- Nonce ----------------------------------------------------------- */
@@ -142,6 +138,10 @@ equations:
 /* =========================================================================
  * RESTRICTION AXIOMS
  * ========================================================================= */
+
+/* Enforcement of Eq checks for protocol logic */
+restriction Equality:
+    "All x y #i. Eq(x,y) @i ==> x = y"
 
 /* LUK derived from a given (seed, counter) pair is consumed at most once  */
 restriction LUK_Single_Use:
@@ -195,109 +195,83 @@ restriction Merchant_Must_Be_Registered:
 
 /* =========================================================================
  * PHASE 0 — DEVICE ATTESTATION (Enhancement 4: Play Integrity)
- * =========================================================================
- * Before any provisioning, the Switch verifies a Play Integrity Token
- * signed by Google's attestation infrastructure. This gates out emulators,
- * rooted devices, and any device that fails the integrity verdict.
  * ========================================================================= */
 
-/* --- Rule 0.1: Client Generates Play Integrity Token -------------------- */
 rule Client_Attest_Device:
     [ Fr(~pi_nonce)
     , Fr(~device_id) ]
-  --[ DeviceAttesting(~device_id) ]--> 
+  --[ DeviceAttesting(~device_id) ]-> 
     [ ClientAttesting(~device_id,
                       play_integrity_token(~device_id, ~pi_nonce),
                       ~pi_nonce)
     , Out(play_integrity_token(~device_id, ~pi_nonce)) ]
 
-/* --- Rule 0.2: Switch Verifies Play Integrity Token --------------------- */
 rule Switch_Verify_Integrity:
     [ In(play_integrity_token(device_id, pi_nonce)) ]
   --[ Eq(pi_verify(play_integrity_token(device_id, pi_nonce),
                    google_attest_pk,
                    pi_nonce),
          true)
-    , IntegrityVerified(device_id) ]--> 
+    , IntegrityVerified(device_id) ]-> 
     [ !DeviceAttested(device_id) ]
 
 
 /* =========================================================================
  * PHASE 1 — KEY GENERATION & SEED PROVISIONING
- * =========================================================================
- * Enhancement 1 (Chain of Trust): Instead of issuing LUK batches, the
- * Switch provisions a single TEE-sealed Master Seed. The client derives
- * LUKs locally on demand via prf(master_seed, hw_counter).
  * ========================================================================= */
 
-/* --- Rule 1.1: TEE Key Generation --------------------------------------- */
 rule Client_TEE_KeyGen:
-    /* The signing key sk is generated and stored securely in TEE.     */
     [ Fr(~sk)
     , Fr(~device_id)
-    , !DeviceAttested(~device_id) ]   /* Integrity gate (Enhancement 3)    */
-  --[ TEE_KeyGenerated(~device_id, pk(~sk)) ]--> 
-    [ !TEE_PrivKey(~device_id, ~sk)   /* TEE enclave, never to Out */
-    , Out(pk(~sk)) ]                  /* Public key registered     */
+    , !DeviceAttested(~device_id) ]
+  --[ TEE_KeyGenerated(~device_id, pk(~sk)) ]-> 
+    [ !TEE_PrivKey(~device_id, ~sk)
+    , Out(pk(~sk)) ]
 
-/* --- Rule 1.2: Merchant Key Generation ---------------------------------- */
 rule Merchant_KeyGen:
     [ Fr(~merchant_id)
     , Fr(~sk_merch) ]
   --[ MerchantRegistered(~merchant_id)
-    , MerchantKeyGenerated(~merchant_id, pk(~sk_merch)) ]--> 
+    , MerchantKeyGenerated(~merchant_id, pk(~sk_merch)) ]-> 
     [ !Merchant_PrivKey(~merchant_id, ~sk_merch)
     , !Merchant_PubKey(~merchant_id, pk(~sk_merch))
     , Out(pk(~sk_merch)) ]
 
-/* --- Rule 1.3: Switch Registers Client Public Key ----------------------- */
 rule Switch_Register_Client:
     [ In(pk_client)
     , Fr(~client_id) ]
-  --[ SwitchRegisteredClient(~client_id, pk_client) ]--> 
+  --[ SwitchRegisteredClient(~client_id, pk_client) ]-> 
     [ !Switch_Registry(~client_id, pk_client) ]
 
-/* --- Rule 1.4: Hardware Counter Initialization -------------------------- */
 rule HW_Counter_Init:
     [ Fr(~dev_id)
     , Fr(~ctr_init) ]
   --[ HWCounter(~dev_id, ~ctr_init)
-    , CounterInitialized(~dev_id, ~ctr_init) ]-->
+    , CounterInitialized(~dev_id, ~ctr_init) ]->
     [ !HW_Counter(~dev_id, ~ctr_init) ]
 
-/* --- Rule 1.5: Switch Provisions Master Seed (Enhancement 1) ------------ */
-/*   Replaces the old Switch_Issue_LUK_Batch.
-     The seed is generated fresh and encrypted under the client's TEE pk.  */
 rule Switch_Provision_Seed:
     [ !Switch_Registry(client_id, pk_client)
-    , !DeviceAttested(device_id)    /* Integrity gate                       */
+    , !DeviceAttested(device_id)
     , Fr(~master_seed)
     , Fr(~seed_id) ]
   --[ SeedProvisioned(device_id)
-    , SwitchIssuedSeed(~seed_id, client_id, ~master_seed) ]--> 
+    , SwitchIssuedSeed(~seed_id, client_id, ~master_seed) ]-> 
     [ !Seed_Registry(~seed_id, client_id, ~master_seed)
     , Out(seed_encrypt(~master_seed, pk_client)) ]
 
-/* --- Rule 1.6: Client Receives and Seals Master Seed in TEE ------------- */
 rule Client_Seal_Seed:
     [ In(seed_enc)
-    , !TEE_PrivKey(device_id, _)      /* Device has valid TEE key             */
+    , !TEE_PrivKey(device_id, _)
     , Fr(~device_ref) ]
-  --[ ClientSealedSeed(device_id) ]--> 
-    /* Unseal using sk is implicit: seed = seed_decrypt(seed_enc, sk).
-       We model the resulting sealed seed in TEE storage.                   */
+  --[ ClientSealedSeed(device_id) ]-> 
     [ !TEE_MasterSeed(device_id, seed_enc) ]
+
 
 /* =========================================================================
  * PHASE 2 — OFFLINE NFC EXCHANGE
- * =========================================================================
- * Enhancement 1: LUK derived from seed + hardware counter (not pre-fetched).
- * Enhancement 2: Distance bounding proof included in APDU.
- * Enhancement 4: Armed session bound to hardware monotonic counter.
  * ========================================================================= */
 
-/* --- Rule 2.1: Biometric Authentication & Hardware-Timed Session Arming - */
-/*   Enhancement 4: session window tied to hw_monotonic_ctr, not OS clock  */
 rule Client_Biometric_Auth:
     [ !TEE_PrivKey(device_id, _)
     , !HW_Counter(device_id, hw_ctr)
@@ -305,17 +279,14 @@ rule Client_Biometric_Auth:
     , Fr(~bio_challenge) ]
   --[ BiometricVerified(device_id, ~session_id)
     , SessionArmed(~session_id)
-    , HWTimedSession(~session_id, hw_ctr) ]--> 
+    , HWTimedSession(~session_id, hw_ctr) ]-> 
     [ ArmedSession(device_id, ~session_id, hw_ctr) ]
 
-/* --- Rule 2.2: Distance-Bounding Challenge-Response (Enhancement 2) ----- */
-/*   Merchant issues a fresh NFC timing challenge.
-     Client responds within the same NFC round (same physical proximity).  */
 rule Merchant_DB_Challenge:
     [ Fr(~chall)
     , Fr(~round_id)
     , !Merchant_PrivKey(merchant_id, _) ]
-  --[ DB_Challenge(~chall, ~round_id) ]--> 
+  --[ DB_Challenge(~chall, ~round_id) ]-> 
     [ MerchantWaiting_DB(merchant_id, ~chall, ~round_id)
     , Out(~chall) ]
 
@@ -325,27 +296,19 @@ rule Client_DB_Response:
     , ArmedSession(device_id, session_id, hw_ctr)
     , Fr(~round_id) ]
   --[ DB_Response(chall, ~round_id)
-    , ClientProvedProximity(device_id, chall) ]--> 
+    , ClientProvedProximity(device_id, chall) ]-> 
     [ ClientProximate(device_id, session_id, hw_ctr, chall,
                       db_response(chall, sk_tee))
-    , ArmedSession(device_id, session_id, hw_ctr) ]   /* session survives  */
+    , ArmedSession(device_id, session_id, hw_ctr) ]
 
-/* --- Rule 2.3: Dynamic LUK Derivation & PABC Generation (Enhancements 1+2+4) */
 rule Client_Send_APDU:
     let
-        /* Enhancement 1: derive LUK on-demand from seed + hw counter     */
+        master_seed_val = seed_decrypt(seed_enc, sk_tee)
         luk      = derive_luk(master_seed_val, hw_ctr)
-
-        /* Enhancement 2: distance-bounding proof embedded in PABC        */
         db_proof = db_response(chall, sk_tee)
-
-        /* Enhancement 4: PABC constructed with hw_ctr instead of ts      */
         pabc_data = pabc_construct(luk, ~n, hw_ctr, amount, merchant_id, db_proof)
-
-        /* Standard signature using TEE private key                       */
         pabc_sig = sign(sk_tee, pabc_data)
-
-        apdu = apdu_build(luk, amount, ~atc, pabc_sig, db_proof)
+        apdu = apdu_build(luk, amount, ~atc, hw_ctr, ~n, pabc_sig, db_proof)
     in
     [ ClientProximate(device_id, session_id, hw_ctr, chall, db_proof)
     , !TEE_MasterSeed(device_id, seed_enc)
@@ -357,17 +320,11 @@ rule Client_Send_APDU:
   --[ ClientSentAPDU(device_id, session_id, luk, ~n, amount, merchant_id)
     , PABCGenerated(device_id, luk, ~n, hw_ctr, amount, merchant_id)
     , SessionExpired(session_id)
-    , ConsumedCounter(device_id, hw_ctr)     /* Enhancement 4: counter used */
+    , ConsumedCounter(device_id, hw_ctr)
     , Secret(sk_tee) ]->
-    /* The used counter slot is retired; next derivation uses ctr+1 */
     [ !UsedCounter(device_id, hw_ctr)
     , Out(apdu) ]
 
-    /* NOTE: master_seed_val is bound by:
-         seed_enc = seed_encrypt(master_seed_val, pk(sk))
-       Tamarin resolves this via the equations block.                      */
-
-/* --- Rule 2.4: Merchant Receives APDU (Zero-Knowledge relay) ------------ */
 rule Merchant_Receive_APDU:
     [ In(apdu)
     , MerchantWaiting_DB(merchant_id, chall, round_id)
@@ -376,88 +333,64 @@ rule Merchant_Receive_APDU:
     , Fr(~hw_ctr_merch) ]
   --[ MerchantReceivedAPDU(merchant_id, apdu)
     , MerchantForwarding(merchant_id, ~tx_nonce)
-    , DB_VerifiedProximity(merchant_id, chall) ]--> 
+    , DB_VerifiedProximity(merchant_id, chall) ]-> 
     [ MerchantHoldsChargeRequest(
           merchant_id,
           charge_request(apdu, merchant_id, ~hw_ctr_merch, ~tx_nonce,
                          sign(h(apdu), sk_merch))) ]
 
+
 /* =========================================================================
  * PHASE 3 — APN-ROUTED SETTLEMENT
  * ========================================================================= */
 
-/* --- Rule 3.1: Merchant Sends ChargeRequest over Private APN ------------ */
 rule Merchant_Send_ChargeRequest:
     [ MerchantHoldsChargeRequest(merchant_id, cr) ]
-  --[ MerchantSentChargeRequest(merchant_id, cr) ]-->
+  --[ MerchantSentChargeRequest(merchant_id, cr) ]->
     [ Out(cr)
     , SentOnAPN(merchant_id, cr) ]
 
-/* --- Rule 3.2: Switch Full Verification & Settlement -------------------- */
 rule Switch_Verify_And_Settle:
     let
-        cr       = charge_request(apdu_in, mid, hw_ctr_cr, nonce_cr, merch_sig)
-        luk      = apdu_extract_luk(apdu_in)
-        pabc_sig = apdu_extract_pabc(apdu_in)
-        db_prf   = apdu_extract_db(apdu_in)
-        pk_cl    = registry_lookup(switch_db, luk)
+        /* Extract contents using precise Pattern Matching */
+        apdu_in   = apdu_build(luk, amount, atc, hw_ctr_pabc, nonce_pabc, pabc_sig, db_prf)
+        pabc_data = pabc_construct(luk, nonce_pabc, hw_ctr_pabc, amount, mid, db_prf)
+        cr        = charge_request(apdu_in, mid, hw_ctr_cr, nonce_cr, merch_sig)
     in
     [ In(cr)
     , !Switch_Registry(client_id, pk_cl)
     , !Seed_Registry(seed_id, client_id, master_seed)
     , !Merchant_PubKey(mid, pk_merch)
-    , Fr(~tx_id)
-    , !SwitchDB(switch_db) ]
+    , Fr(~tx_id) ]
   --[ /* ① Merchant signature valid */
       Eq(verify(merch_sig, h(apdu_in), pk_merch), true),
 
-      /* ② PABC signature valid */
+      /* ② PABC signature valid (crucial fix) */
+      Eq(verify(pabc_sig, pabc_data, pk_cl), true),
+
+      /* ③ Ensure LUK matches derived seed */
+      Eq(luk, derive_luk(master_seed, hw_ctr_pabc)),
+
       SwitchVerifiedSignature(client_id, luk, pabc_sig, pk_cl),
-
-      /* ③ Distance-bounding proof present */
       SwitchVerifiedProximity(client_id, db_prf),
-
-      /* ④ Accept nonce (anti-replay) */
       SwitchAcceptedNonce(nonce_cr),
-
-      /* ⑤ Consume LUK (single-use) */
       ConsumedLUK(luk),
-
-      /* ⑥ Settlement */
       SwitchSettled(mid, ~tx_id),
       TransactionSettled(client_id, mid, luk, ~tx_id)
-    ]--> 
+    ]-> 
     [ Out(settle_ack(~tx_id, 'SUCCESS')) ]
 
-/* --- Rule 3.3: Switch DB Init ------------------------------------------- */
-rule Switch_Init:
-    [ Fr(~db_id) ]
-  --[ SwitchInitialized(~db_id) ]--> 
-    [ !SwitchDB(~db_id) ]
-
 /* =========================================================================
- * ADVERSARY MODEL — ADDITIONAL RULES
- * =========================================================================
- * Standard Dolev-Yao. The TEE private key never reaches Out(), ensuring
- * the adversary cannot forge signatures.
- *
- * Enhancement 3: Adversary may attempt to forge play_integrity_token, but
- * pi_verify requires google_attest_pk which is a public constant; forging
- * requires the corresponding private key, which is never in the model.
+ * ADVERSARY MODEL
  * ========================================================================= */
 
 rule Adv_Observe:
-    [ Out(x) ] --> [ KnowsPublic(x) ]
+    [ Out(x) ] -> [ KnowsPublic(x) ]
 
 /* =========================================================================
  * SECURITY LEMMAS
  * ========================================================================= */
 
-/*
- * L1 — AUTHENTICATION
- * If the Switch settles tx (client_id, mid, luk, tx_id) then client_id
- * must have previously sent an APDU containing that luk.
- */
 lemma Authentication:
     "All client_id mid luk tx_id #ts.
         TransactionSettled(client_id, mid, luk, tx_id) @ #ts
@@ -466,21 +399,11 @@ lemma Authentication:
             ClientSentAPDU(client_id, session_id, luk, _, amount, merchant_id) @ #tc
             & #tc < #ts"
 
-/*
- * L2 — ANTI-REPLAY
- * A LUK derived token can be marked Consumed at most once.
- */
 lemma Anti_Replay:
     "All luk #t1 #t2.
         ConsumedLUK(luk) @ #t1 & ConsumedLUK(luk) @ #t2
         ==> #t1 = #t2"
 
-/*
- * L3 — SESSION INTEGRITY (Hardware-Timed)
- * Enhancement 5: every PABC is generated within a hardware-counter window.
- * The Armed session that produced the PABC must have started before and
- * expired after the PABC generation event.
- */
 lemma Session_Integrity:
     "All dev sid luk n hw_ctr amount mid #tp.
         PABCGenerated(dev, luk, n, hw_ctr, amount, mid) @ #tp
@@ -491,24 +414,12 @@ lemma Session_Integrity:
             & HWTimedSession(sid, hw_ctr) @ #ta
             & #ta < #tp & #tp <= #te"
 
-/*
- * L4 — MASTER SEED SECRECY (Enhancement 1)
- * The Master Seed is encrypted under the client's TEE public key.
- * Since the TEE private key (or its share) never reaches Out(),
- * the adversary cannot decrypt it.
- */
 lemma Seed_Secrecy:
     "All seed_id client_id ms #ts.
         SwitchIssuedSeed(seed_id, client_id, ms) @ #ts
         ==>
         not (Ex #ta. KU(ms) @ #ta)"
 
-/*
- * L5 — DISTANCE BOUNDING (Enhancement 2)
- * Every settled transaction is backed by a distance-bounding proof
- * generated in the same NFC round as the merchant's challenge.
- * This proves relay attacks (which add network latency) are blocked.
- */
 lemma Distance_Bounding:
     "All client_id mid luk tx_id #ts.
         TransactionSettled(client_id, mid, luk, tx_id) @ #ts
@@ -517,43 +428,24 @@ lemma Distance_Bounding:
             ClientProvedProximity(client_id, chall) @ #tdb
             & #tdb < #ts"
 
-/*
- * L6 — DEVICE INTEGRITY GATE (Enhancement 3)
- * No Master Seed is ever provisioned to a device that has not passed
- * the Play Integrity verification.
- */
 lemma Device_Integrity:
     "All dev #tp.
         SeedProvisioned(dev) @ #tp
         ==>
         Ex #ti. IntegrityVerified(dev) @ #ti & #ti < #tp"
 
-/*
- * L7 — HARDWARE COUNTER MONOTONICITY (Enhancement 4)
- * The hardware counter for a given device strictly increases.
- * A counter value used for a LUK derivation is never reused.
- */
 lemma Counter_Monotonicity:
     "All dev hw_ctr #t1 #t2.
         ConsumedCounter(dev, hw_ctr) @ #t1
         & ConsumedCounter(dev, hw_ctr) @ #t2
         ==> #t1 = #t2"
 
-/*
- * L8 — MERCHANT ZERO-KNOWLEDGE
- * The SoftPOS merchant never learns the client's TEE private key.
- */
 lemma Merchant_ZeroKnowledge:
     "All mid dev apdu #tm.
         MerchantReceivedAPDU(mid, apdu) @ #tm
         ==>
         (not (Ex sk_t #t1 #ta. TEE_KeyGenerated(dev, pk(sk_t)) @ #t1 & KU(sk_t) @ #ta))"
 
-/*
- * L9 — SWITCH NON-FRAMEABILITY
- * The Switch only emits SwitchSettled when it has also verified
- * the signature and distance-bounding proof in the same rule instance.
- */
 lemma Switch_NonFrameability:
     "All mid tx_id #ts.
         SwitchSettled(mid, tx_id) @ #ts
@@ -564,12 +456,6 @@ lemma Switch_NonFrameability:
             & #tv = #ts
             & #tdb = #ts"
 
-/*
- * L10 — EXECUTABILITY (Sanity Check)
- * The model is not vacuously true: at least one complete execution
- * trace exists in which a transaction is settled.
- * Run this first — if it fails, the model has a structural error.
- */
 lemma Executability:
     exists-trace
     "Ex client_id mid luk tx_id #ts.
