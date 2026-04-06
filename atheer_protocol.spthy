@@ -158,31 +158,25 @@ restriction Merchant_Must_Be_Registered:
  * PHASE 0 — DEVICE ATTESTATION (Enhancement 4: Play Integrity)
  * ========================================================================= */
 
-rule Client_Attest_Device:
-    [ Fr(~pi_nonce)
-    , Fr(~device_id) ]
-  --[ DeviceAttesting(~device_id) ]-> 
-    [ ClientAttesting(~device_id, play_integrity_token(~device_id, ~pi_nonce), ~pi_nonce)
-    , Out( <~device_id, ~pi_nonce, play_integrity_token(~device_id, ~pi_nonce)> ) ]
+rule Client_Attest_And_KeyGen:
+    [ Fr(~device_id), Fr(~sk) ]
+  --[ TEE_KeyGenerated(~device_id, pk(~sk))
+    , DeviceAttesting(~device_id) ]-> 
+    [ !TEE_PrivKey(~device_id, ~sk)
+    , Out( <~device_id, pk(~sk), play_integrity_token(~device_id, pk(~sk))> ) ]
 
-rule Switch_Verify_Integrity:
-    [ In( <device_id, pi_nonce, pi_token> ) ]
-  --[ Eq(pi_verify(pi_token, google_attest_pk, pi_nonce), true)
-    , IntegrityVerified(device_id) ]-> 
-    [ !DeviceAttested(device_id) ]
+rule Switch_Verify_And_Register:
+    [ In( <device_id, pk_client, pi_token> ) ]
+  --[ Eq(pi_verify(pi_token, google_attest_pk, pk_client), true)
+    , IntegrityVerified(device_id)
+    , SwitchRegisteredClient(device_id, pk_client) ]-> 
+    [ !DeviceAttested(device_id)
+    , !Switch_Registry(device_id, pk_client) ]
 
 
 /* =========================================================================
  * PHASE 1 — KEY GENERATION & SEED PROVISIONING
  * ========================================================================= */
-
-rule Client_TEE_KeyGen:
-    [ Fr(~sk)
-    , Fr(~device_id)
-    , !DeviceAttested(~device_id) ]
-  --[ TEE_KeyGenerated(~device_id, pk(~sk)) ]-> 
-    [ !TEE_PrivKey(~device_id, ~sk)
-    , Out(pk(~sk)) ]
 
 rule Merchant_KeyGen:
     [ Fr(~merchant_id)
@@ -193,12 +187,6 @@ rule Merchant_KeyGen:
     , !Merchant_PubKey(~merchant_id, pk(~sk_merch))
     , Out(pk(~sk_merch)) ]
 
-rule Switch_Register_Client:
-    [ In(pk_client)
-    , Fr(~client_id) ]
-  --[ SwitchRegisteredClient(~client_id, pk_client) ]-> 
-    [ !Switch_Registry(~client_id, pk_client) ]
-
 rule HW_Counter_Init:
     [ Fr(~dev_id)
     , Fr(~ctr_init) ]
@@ -207,13 +195,13 @@ rule HW_Counter_Init:
     [ !HW_Counter(~dev_id, ~ctr_init) ]
 
 rule Switch_Provision_Seed:
-    [ !Switch_Registry(client_id, pk_client)
+    [ !Switch_Registry(device_id, pk_client)
     , !DeviceAttested(device_id)
     , Fr(~master_seed)
     , Fr(~seed_id) ]
   --[ SeedProvisioned(device_id)
-    , SwitchIssuedSeed(~seed_id, client_id, ~master_seed) ]-> 
-    [ !Seed_Registry(~seed_id, client_id, ~master_seed)
+    , SwitchIssuedSeed(~seed_id, device_id, ~master_seed) ]-> 
+    [ !Seed_Registry(~seed_id, device_id, ~master_seed)
     , Out(seed_encrypt(~master_seed, pk_client)) ]
 
 rule Client_Seal_Seed:
