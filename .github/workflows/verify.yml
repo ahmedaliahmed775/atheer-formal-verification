@@ -18,7 +18,9 @@ on:
 
 env:
   TAMARIN_VERSION: "1.8.0"
+  # حد الذاكرة الصريح لمنع OOM / Exit 143
   TAMARIN_RTS_FLAGS: "+RTS -N2 -M6G -RTS"
+  # [FIX CI] رابط البينار الرسمي — tamarin-prover غير موجود في apt على Ubuntu 24.04
   TAMARIN_URL: "https://github.com/tamarin-prover/tamarin-prover/releases/download/1.8.0/tamarin-prover-1.8.0-linux64.tar.gz"
 
 jobs:
@@ -53,7 +55,7 @@ jobs:
           echo "✅ بناء الجملة صحيح"
 
   # ─────────────────────────────────────────────────────────────────────────
-  # JOB 2: إثبات Executability
+  # JOB 2: إثبات Executability (سريع — يتحقق من سلامة النموذج)
   # ─────────────────────────────────────────────────────────────────────────
   verify-executability:
     name: "⚡ إثبات سريع — Executability"
@@ -92,4 +94,111 @@ jobs:
       - name: Upload log
         if: always()
         uses: actions/upload-artifact@v4
-        with
+        with:
+          name: executability-log
+          path: executability.log
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # JOB 3: البراهين الأمنية (متوازٍ بحد أقصى 4 jobs في آن)
+  # ─────────────────────────────────────────────────────────────────────────
+  verify-security-lemmas:
+    name: "🔐 ${{ matrix.lemma }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: verify-executability
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        lemma:
+          - Authentication
+          - Anti_Replay
+          - Session_Integrity
+          - Seed_Secrecy
+          - Distance_Bounding
+          - Device_Integrity
+          - Counter_Monotonicity
+          - Merchant_ZeroKnowledge
+          - Switch_NonFrameability
+
+    steps:
+      - uses: actions/checkout@v4
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+      - name: Install Tamarin
+        run: |
+          curl -fsSL "${{ env.TAMARIN_URL }}" -o tamarin.tar.gz
+          tar -xzf tamarin.tar.gz
+          sudo mv tamarin-prover /usr/local/bin/tamarin-prover
+          sudo chmod +x /usr/local/bin/tamarin-prover
+          sudo apt-get update -qq
+          sudo apt-get install -y maude
+
+      - name: Prove ${{ matrix.lemma }}
+        run: |
+          LEMMA="${{ matrix.lemma }}"
+          if [[ -n "${{ github.event.inputs.lemma }}" ]]; then
+            LEMMA="${{ github.event.inputs.lemma }}"
+          fi
+
+          TIMEOUT="${{ github.event.inputs.timeout || '45' }}"
+
+          timeout "${TIMEOUT}m" tamarin-prover atheer_protocol.spthy \
+            --prove="${LEMMA}" \
+            ${{ env.TAMARIN_RTS_FLAGS }} \
+            2>&1 | tee "${LEMMA}.log"
+
+          EXIT_CODE=$?
+
+          if [ $EXIT_CODE -eq 124 ]; then
+            echo "⏱️ ${LEMMA}: TIMEOUT بعد ${TIMEOUT} دقيقة"
+            exit 1
+          fi
+
+          if grep -q "verified" "${LEMMA}.log"; then
+            echo "✅ ${LEMMA}: verified"
+          elif grep -q "falsified" "${LEMMA}.log"; then
+            echo "❌ ${LEMMA}: FALSIFIED — يوجد هجوم مضاد!"
+            cat "${LEMMA}.log"
+            exit 1
+          else
+            echo "❌ ${LEMMA}: نتيجة غير محددة"
+            cat "${LEMMA}.log"
+            exit 1
+          fi
+
+      - name: Upload proof log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: proof-${{ matrix.lemma }}
+          path: ${{ matrix.lemma }}.log
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # JOB 4: ملخص النتائج
+  # ─────────────────────────────────────────────────────────────────────────
+  summary:
+    name: "📊 ملخص النتائج"
+    runs-on: ubuntu-latest
+    needs: [verify-executability, verify-security-lemmas]
+    if: always()
+    steps:
+      - name: Generate summary
+        run: |
+          echo "## نتائج التحقق الرسمي — أثير v2.0" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| البرهان | النوع | النتيجة |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|-------|---------|" >> $GITHUB_STEP_SUMMARY
+
+          EXEC="${{ needs.verify-executability.result }}"
+          [[ "$EXEC" == "success" ]] && ICON="✅" || ICON="❌"
+          echo "| Executability | exists-trace | $ICON $EXEC |" >> $GITHUB_STEP_SUMMARY
+
+          LEMMA_RESULT="${{ needs.verify-security-lemmas.result }}"
+          [[ "$LEMMA_RESULT" == "success" ]] && ICON="✅" || ICON="❌"
+          for lemma in Authentication Anti_Replay Session_Integrity Seed_Secrecy \
+                       Distance_Bounding Device_Integrity Counter_Monotonicity \
+                       Merchant_ZeroKnowledge Switch_NonFrameability; do
+            echo "| $lemma | all-traces | $ICON |" >> $GITHUB_STEP_SUMMARY
+          done
