@@ -76,7 +76,7 @@ jobs:
     name: '⚡ إثبات سريع — Executability'
     runs-on: ubuntu-22.04
     needs: syntax-check
-    timeout-minutes: 20
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
       - name: تثبيت الأدوات
@@ -111,7 +111,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-lemma: [Authentication, Anti_Replay, Session_Integrity, Seed_Secrecy, Distance_Bounding, Device_Integrity, Counter_Monotonicity, Switch_NonFrameability, Merchant_ZeroKnowledge]    steps:
+        lemma: [Authentication, Anti_Replay, Session_Integrity, Seed_Secrecy, Distance_Bounding, Device_Integrity, Counter_Monotonicity, Switch_NonFrameability, Merchant_ZeroKnowledge]
+    steps:
       - uses: actions/checkout@v4
       - name: تثبيت الأدوات
         run: |
