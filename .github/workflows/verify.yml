@@ -21,7 +21,7 @@ env:
   # حد الذاكرة الصريح لمنع OOM / Exit 143
   TAMARIN_RTS_FLAGS: "+RTS -N2 -M6G -RTS"
   # [FIX CI] رابط البينار الرسمي — tamarin-prover غير موجود في apt على Ubuntu 24.04
-  TAMARIN_URL: "https://github.com/tamarin-prover/tamarin-prover/releases/download/1.8.0/tamarin-prover-1.8.0-linux64.tar.gz"
+  TAMARIN_URL: "https://github.com/tamarin-prover/tamarin-prover/releases/download/1.8.0/tamarin-prover-1.8.0-linux64-ubuntu.tar.gz"
 
 jobs:
 
