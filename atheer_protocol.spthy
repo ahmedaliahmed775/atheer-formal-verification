@@ -385,7 +385,7 @@ rule Switch_Verify_And_Settle:
  * ========================================================================= */
 
 rule Adv_Observe:
-    [ Out(x) ] -> [ KnowsPublic(x) ]
+    [ Out(x) ] --> [ KnowsPublic(x) ]
 
 /* =========================================================================
  * SECURITY LEMMAS
