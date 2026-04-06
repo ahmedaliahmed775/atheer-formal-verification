@@ -395,8 +395,8 @@ lemma Authentication:
     "All client_id mid luk tx_id #ts.
         TransactionSettled(client_id, mid, luk, tx_id) @ #ts
         ==>
-        Ex session_id amount merchant_id #tc.
-            ClientSentAPDU(client_id, session_id, luk, _, amount, merchant_id) @ #tc
+        Ex session_id amount merchant_id n #tc.
+            ClientSentAPDU(client_id, session_id, luk, n, amount, merchant_id) @ #tc
             & #tc < #ts"
 
 lemma Anti_Replay:
@@ -450,8 +450,8 @@ lemma Switch_NonFrameability:
     "All mid tx_id #ts.
         SwitchSettled(mid, tx_id) @ #ts
         ==>
-        Ex client_id luk db_prf #tv #tdb.
-            SwitchVerifiedSignature(client_id, luk, _, _) @ #tv
+        Ex client_id luk db_prf sig pk_cl #tv #tdb.
+            SwitchVerifiedSignature(client_id, luk, sig, pk_cl) @ #tv
             & SwitchVerifiedProximity(client_id, db_prf) @ #tdb
             & #tv = #ts
             & #tdb = #ts"
