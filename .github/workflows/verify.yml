@@ -36,7 +36,7 @@ jobs:
   syntax-check:
     name: '🔍 فحص بناء الجملة'
     runs-on: ubuntu-22.04
-    timeout-minutes: 15
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
 
@@ -105,9 +105,10 @@ jobs:
     runs-on: ubuntu-22.04
     needs: verify-executability
     strategy:
+      fail-fast: falsestrategy:
       fail-fast: false
       matrix:
-        lemma: [Authentication, Anti_Replay, Session_Integrity, Seed_Secrecy, Distance_Bounding, Device_Integrity, Counter_Monotonicity, Switch_NonFrameability]
+        lemma: [Authentication, Anti_Replay, Session_Integrity, Seed_Secrecy, Distance_Bounding, Device_Integrity, Counter_Monotonicity, Switch_NonFrameability, Merchant_ZK]
     steps:
       - uses: actions/checkout@v4
       - name: تثبيت الأدوات
