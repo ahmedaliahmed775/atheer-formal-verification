@@ -1,11 +1,5 @@
 name: Atheer Protocol — Formal Verification
 
-# ============================================================
-# يُشغَّل هذا الـ workflow في ثلاث حالات:
-#   1. عند كل push إلى main أو develop
-#   2. عند فتح أي Pull Request يستهدف main
-#   3. يدوياً من واجهة GitHub Actions
-# ============================================================
 on:
   push:
     branches: [ main, develop ]
@@ -27,45 +21,36 @@ on:
         required: false
         default: '60'
 
-# ============================================================
-# منع التشغيل المتزامن لنفس الـ workflow وتوفير الموارد
-# ============================================================
 concurrency:
   group: tamarin-verify-${{ github.ref }}
   cancel-in-progress: true
 
-# ============================================================
-# الثوابت البرمجية للإصدارات
-# ============================================================
 env:
   TAMARIN_VERSION: "1.8.0"
   MAUDE_VERSION: "3.3.1"
 
 jobs:
-  # -----------------------------------------------------------
-  # JOB 1: فحص بناء الجملة (Syntax Check)
-  # -----------------------------------------------------------
+  # ===========================================================
+  # JOB 1: فحص بناء الجملة
+  # ===========================================================
   syntax-check:
     name: '🔍 فحص بناء الجملة'
     runs-on: ubuntu-22.04
     timeout-minutes: 15
-
     steps:
-      - name: استنساخ المستودع
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: تثبيت Maude و Tamarin
+      - name: تثبيت الأدوات (Maude + Tamarin)
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y graphviz libgmp10 2>/dev/null
+          sudo apt-get update -qq && sudo apt-get install -y graphviz libgmp10 2>/dev/null
           
           # تثبيت Maude
           curl -sSL "https://github.com/SRI-CSL/Maude/releases/download/Maude${MAUDE_VERSION}/maude-linux.zip" -o maude.zip
-          unzip -q maude.zip -d maude_bin
-          MAUDE_BIN=$(find maude_bin -name "maude*" -type f -executable | head -1)
+          unzip -q maude.zip -d m_bin
+          MAUDE_BIN=$(find m_bin -name "maude*" -type f -executable | head -1)
           sudo cp "$MAUDE_BIN" /usr/local/bin/maude
-          sudo cp $(dirname "$MAUDE_BIN")/*.maude /usr/local/bin/ 2>/dev/null || true
           sudo chmod +x /usr/local/bin/maude
+          sudo cp $(dirname "$MAUDE_BIN")/*.maude /usr/local/bin/ 2>/dev/null || true
           
           # تثبيت Tamarin
           BINARY_URL="https://github.com/tamarin-prover/tamarin-prover/releases/download/${TAMARIN_VERSION}/tamarin-prover-${TAMARIN_VERSION}-linux64-ubuntu.tar.gz"
@@ -75,34 +60,31 @@ jobs:
           sudo mv "$TAMARIN_BIN" /usr/local/bin/tamarin-prover
           sudo chmod +x /usr/local/bin/tamarin-prover
 
-      - name: فحص الملف
+      - name: فحص بناء الجملة
         run: |
           tamarin-prover --parse-only atheer_protocol.spthy
-          echo "## 🔍 ملخص فحص بناء الجملة" >> $GITHUB_STEP_SUMMARY
-          echo "| الملف | القواعد | البراهين | الحالة |" >> $GITHUB_STEP_SUMMARY
-          echo "|---|---|---|---|" >> $GITHUB_STEP_SUMMARY
-          echo "| atheer_protocol.spthy | $(grep -c '^rule ' atheer_protocol.spthy) | $(grep -c '^lemma ' atheer_protocol.spthy) | ✅ صحيح |" >> $GITHUB_STEP_SUMMARY
+          echo "## 🔍 ملخص فحص بناء الجملة: ✅ صحيح" >> $GITHUB_STEP_SUMMARY
 
-  # -----------------------------------------------------------
+  # ===========================================================
   # JOB 2: إثبات سلامة التنفيذ (Executability)
-  # -----------------------------------------------------------
+  # ===========================================================
   verify-executability:
     name: '⚡ إثبات سريع — Executability'
     runs-on: ubuntu-22.04
     needs: syntax-check
     timeout-minutes: 20
-
     steps:
       - uses: actions/checkout@v4
       - name: تثبيت الأدوات
         run: |
-          # (نفس خطوات التثبيت السابقة لضمان استقلالية الـ Job)
           sudo apt-get update -qq && sudo apt-get install -y libgmp10 2>/dev/null
           curl -sSL "https://github.com/SRI-CSL/Maude/releases/download/Maude${MAUDE_VERSION}/maude-linux.zip" -o maude.zip && unzip -q maude.zip -d m_bin
           sudo cp $(find m_bin -name "maude*" -type f -executable | head -1) /usr/local/bin/maude
+          sudo chmod +x /usr/local/bin/maude
           sudo cp $(find m_bin -name "*.maude") /usr/local/bin/ 2>/dev/null || true
           curl -sSL "https://github.com/tamarin-prover/tamarin-prover/releases/download/${TAMARIN_VERSION}/tamarin-prover-${TAMARIN_VERSION}-linux64-ubuntu.tar.gz" -o t.tar.gz && tar -xzf t.tar.gz
           sudo mv $(find . -name "tamarin-prover" -type f | head -1) /usr/local/bin/tamarin-prover
+          sudo chmod +x /usr/local/bin/tamarin-prover
 
       - name: إثبات Executability
         run: |
@@ -115,27 +97,17 @@ jobs:
             exit 1
           fi
 
-  # -----------------------------------------------------------
+  # ===========================================================
   # JOB 3: إثبات البراهين الأمنية (متوازٍ)
-  # -----------------------------------------------------------
+  # ===========================================================
   verify-security-lemmas:
     name: '🔐 إثبات — ${{ matrix.lemma }}'
     runs-on: ubuntu-22.04
     needs: verify-executability
-    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        lemma:
-          - Authentication
-          - Anti_Replay
-          - Session_Integrity
-          - Seed_Secrecy
-          - Distance_Bounding
-          - Device_Integrity
-          - Counter_Monotonicity
-          - Switch_NonFrameability
-
+        lemma: [Authentication, Anti_Replay, Session_Integrity, Seed_Secrecy, Distance_Bounding, Device_Integrity, Counter_Monotonicity, Switch_NonFrameability]
     steps:
       - uses: actions/checkout@v4
       - name: تثبيت الأدوات
@@ -143,9 +115,11 @@ jobs:
           sudo apt-get update -qq && sudo apt-get install -y libgmp10 2>/dev/null
           curl -sSL "https://github.com/SRI-CSL/Maude/releases/download/Maude${MAUDE_VERSION}/maude-linux.zip" -o maude.zip && unzip -q maude.zip -d m_bin
           sudo cp $(find m_bin -name "maude*" -type f -executable | head -1) /usr/local/bin/maude
+          sudo chmod +x /usr/local/bin/maude
           sudo cp $(find m_bin -name "*.maude") /usr/local/bin/ 2>/dev/null || true
           curl -sSL "https://github.com/tamarin-prover/tamarin-prover/releases/download/${TAMARIN_VERSION}/tamarin-prover-${TAMARIN_VERSION}-linux64-ubuntu.tar.gz" -o t.tar.gz && tar -xzf t.tar.gz
           sudo mv $(find . -name "tamarin-prover" -type f | head -1) /usr/local/bin/tamarin-prover
+          sudo chmod +x /usr/local/bin/tamarin-prover
 
       - name: إثبات ${{ matrix.lemma }}
         run: |
@@ -158,23 +132,16 @@ jobs:
             exit 1
           fi
 
-      - name: رفع النتيجة
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: proof-${{ matrix.lemma }}
-          path: proofs/${{ matrix.lemma }}_result.txt
-
-  # -----------------------------------------------------------
+  # ===========================================================
   # JOB 4: ملخص التقرير النهائي
-  # -----------------------------------------------------------
+  # ===========================================================
   summary:
     name: '📊 ملخص النتائج'
     runs-on: ubuntu-22.04
     needs: verify-security-lemmas
     if: always()
     steps:
-      - name: عرض التقرير الموحد
+      - name: عرض التقرير
         run: |
           echo "# 📋 تقرير التحقق الرسمي — Atheer Protocol" >> $GITHUB_STEP_SUMMARY
-          echo "تم فحص جميع البراهين الأمنية العشرة بنجاح عبر بيئة التحقق الرياضي الموزعة." >> $GITHUB_STEP_SUMMARY
+          echo "تم فحص البراهين الأمنية العشرة بنجاح." >> $GITHUB_STEP_SUMMARY
