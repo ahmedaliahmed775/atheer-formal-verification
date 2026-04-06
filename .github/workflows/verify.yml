@@ -1,151 +1,190 @@
-name: Atheer Protocol — Formal Verification
+name: "Atheer Protocol — Formal Verification"
 
-# ============================================================
-# يُشغَّل هذا الـ workflow عند الـ Push أو الـ Pull Request
-# أو يدوياً عبر workflow_dispatch
-# ============================================================
 on:
   push:
-    branches: [ main, develop ]
-    paths:
-      - '**.spthy'
-      - '.github/workflows/verify.yml'
+    paths: ['atheer_protocol.spthy', '.github/workflows/verify.yml']
   pull_request:
-    branches: [ main ]
-    paths:
-      - '**.spthy'
+    paths: ['atheer_protocol.spthy', '.github/workflows/verify.yml']
   workflow_dispatch:
     inputs:
       lemma:
-        description: 'اسم Lemma محدد للإثبات (اتركه فارغاً لإثبات الكل)'
+        description: 'اسم برهان محدد (فارغ = الكل)'
         required: false
         default: ''
       timeout:
         description: 'مهلة الإثبات بالدقائق'
         required: false
-        default: '60'
-
-concurrency:
-  group: tamarin-verify-${{ github.ref }}
-  cancel-in-progress: true
+        default: '45'
 
 env:
   TAMARIN_VERSION: "1.8.0"
-  MAUDE_VERSION: "3.3.1"
+  # [FIX CI-01] تحديد حد الذاكرة صراحةً لمنع OOM / Exit 143
+  TAMARIN_RTS_FLAGS: "+RTS -N2 -M6G -RTS"
 
 jobs:
-  # ===========================================================
-  # JOB 1: فحص بناء الجملة (Syntax Check)
-  # ===========================================================
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # JOB 1: فحص بناء الجملة
+  # ─────────────────────────────────────────────────────────────────────────
   syntax-check:
-    name: '🔍 فحص بناء الجملة'
-    runs-on: ubuntu-22.04
-    timeout-minutes: 15
+    name: "🔍 فحص بناء الجملة"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+        env:
+          # [FIX CI-02] تهيئة Node.js 24 لتفادي deprecation warning
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
-      - name: تثبيت الأدوات (Maude + Tamarin)
+      - name: Install Tamarin
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y graphviz libgmp10 2>/dev/null
-          
-          # تثبيت Maude
-          curl -sSL "https://github.com/SRI-CSL/Maude/releases/download/Maude${MAUDE_VERSION}/maude-linux.zip" -o maude.zip
-          unzip -q maude.zip -d m_bin
-          MAUDE_BIN=$(find m_bin -name "maude*" -type f -executable | head -1)
-          sudo cp "$MAUDE_BIN" /usr/local/bin/maude
-          sudo chmod +x /usr/local/bin/maude
-          sudo cp $(dirname "$MAUDE_BIN")/*.maude /usr/local/bin/ 2>/dev/null || true
-          
-          # تثبيت Tamarin
-          BINARY_URL="https://github.com/tamarin-prover/tamarin-prover/releases/download/${TAMARIN_VERSION}/tamarin-prover-${TAMARIN_VERSION}-linux64-ubuntu.tar.gz"
-          curl -sSL "$BINARY_URL" -o tamarin.tar.gz
-          tar -xzf tamarin.tar.gz
-          TAMARIN_BIN=$(find . -maxdepth 3 -name "tamarin-prover" -type f | head -1)
-          sudo mv "$TAMARIN_BIN" /usr/local/bin/tamarin-prover
-          sudo chmod +x /usr/local/bin/tamarin-prover
+          sudo apt-get update -qq
+          sudo apt-get install -y tamarin-prover
+          tamarin-prover --version
 
-      - name: فحص بناء الجملة
+      - name: Syntax check
         run: |
-          tamarin-prover --parse-only atheer_protocol.spthy
-          echo "## 🔍 ملخص فحص بناء الجملة: ✅ صحيح" >> $GITHUB_STEP_SUMMARY
+          tamarin-prover atheer_protocol.spthy
+          echo "✅ بناء الجملة صحيح"
 
-  # ===========================================================
-  # JOB 2: إثبات سلامة التنفيذ (Executability)
-  # ===========================================================
+  # ─────────────────────────────────────────────────────────────────────────
+  # JOB 2: إثبات Executability أولاً (سريع — يتحقق من سلامة النموذج)
+  # ─────────────────────────────────────────────────────────────────────────
   verify-executability:
-    name: '⚡ إثبات سريع — Executability'
-    runs-on: ubuntu-22.04
+    name: "⚡ إثبات سريع — Executability"
+    runs-on: ubuntu-latest
+    # [FIX CI-03] timeout أطول لـ Executability (30 دقيقة)
+    timeout-minutes: 30
     needs: syntax-check
-    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
-      - name: تثبيت الأدوات
-        run: |
-          sudo apt-get update -qq && sudo apt-get install -y libgmp10 2>/dev/null
-          curl -sSL "https://github.com/SRI-CSL/Maude/releases/download/Maude${MAUDE_VERSION}/maude-linux.zip" -o maude.zip && unzip -q maude.zip -d m_bin
-          sudo cp $(find m_bin -name "maude*" -type f -executable | head -1) /usr/local/bin/maude
-          sudo chmod +x /usr/local/bin/maude
-          sudo cp $(find m_bin -name "*.maude") /usr/local/bin/ 2>/dev/null || true
-          curl -sSL "https://github.com/tamarin-prover/tamarin-prover/releases/download/${TAMARIN_VERSION}/tamarin-prover-${TAMARIN_VERSION}-linux64-ubuntu.tar.gz" -o t.tar.gz && tar -xzf t.tar.gz
-          sudo mv $(find . -name "tamarin-prover" -type f | head -1) /usr/local/bin/tamarin-prover
-          sudo chmod +x /usr/local/bin/tamarin-prover
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
-      - name: إثبات Executability
+      - name: Install Tamarin
         run: |
-          mkdir -p proofs
-          tamarin-prover atheer_protocol.spthy --prove=Executability +RTS -N$(nproc) -RTS 2>&1 | tee proofs/Executability_result.txt
-          if grep -q "verified" proofs/Executability_result.txt; then
-            echo "## ⚡ Executability: ✅ مُثبَت" >> $GITHUB_STEP_SUMMARY
+          sudo apt-get update -qq
+          sudo apt-get install -y tamarin-prover
+
+      - name: Prove Executability
+        run: |
+          tamarin-prover atheer_protocol.spthy \
+            --prove=Executability \
+            ${{ env.TAMARIN_RTS_FLAGS }} \
+            2>&1 | tee executability.log
+
+          if grep -q "verified" executability.log; then
+            echo "✅ Executability: verified"
           else
-            echo "## ⚡ Executability: ❌ فشل" >> $GITHUB_STEP_SUMMARY
+            echo "❌ Executability: FAILED"
             exit 1
           fi
 
-  # ===========================================================
-  # JOB 3: إثبات البراهين الأمنية (متوازٍ)
-  # ===========================================================
+      - name: Upload log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: executability-log
+          path: executability.log
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # JOB 3: البراهين الأمنية (متوازٍ بحد أقصى 4 jobs في آن)
+  # ─────────────────────────────────────────────────────────────────────────
   verify-security-lemmas:
-    name: '🔐 إثبات — ${{ matrix.lemma }}'
-    runs-on: ubuntu-22.04
+    name: "🔐 ${{ matrix.lemma }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
     needs: verify-executability
     strategy:
       fail-fast: false
+      # [FIX CI] تحديد max-parallel لمنع الضغط على Runner
+      max-parallel: 4
       matrix:
-        lemma: [Authentication, Anti_Replay, Session_Integrity, Seed_Secrecy, Distance_Bounding, Device_Integrity, Counter_Monotonicity, Switch_NonFrameability, Merchant_ZeroKnowledge]
+        lemma:
+          - Authentication
+          - Anti_Replay
+          - Session_Integrity
+          - Seed_Secrecy
+          - Distance_Bounding
+          - Device_Integrity
+          - Counter_Monotonicity
+          - Merchant_ZeroKnowledge
+          - Switch_NonFrameability
+
     steps:
       - uses: actions/checkout@v4
-      - name: تثبيت الأدوات
-        run: |
-          sudo apt-get update -qq && sudo apt-get install -y libgmp10 2>/dev/null
-          curl -sSL "https://github.com/SRI-CSL/Maude/releases/download/Maude${MAUDE_VERSION}/maude-linux.zip" -o maude.zip && unzip -q maude.zip -d m_bin
-          sudo cp $(find m_bin -name "maude*" -type f -executable | head -1) /usr/local/bin/maude
-          sudo chmod +x /usr/local/bin/maude
-          sudo cp $(find m_bin -name "*.maude") /usr/local/bin/ 2>/dev/null || true
-          curl -sSL "https://github.com/tamarin-prover/tamarin-prover/releases/download/${TAMARIN_VERSION}/tamarin-prover-${TAMARIN_VERSION}-linux64-ubuntu.tar.gz" -o t.tar.gz && tar -xzf t.tar.gz
-          sudo mv $(find . -name "tamarin-prover" -type f | head -1) /usr/local/bin/tamarin-prover
-          sudo chmod +x /usr/local/bin/tamarin-prover
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
-      - name: إثبات ${{ matrix.lemma }}
+      - name: Install Tamarin
         run: |
-          mkdir -p proofs
-          tamarin-prover atheer_protocol.spthy --prove=${{ matrix.lemma }} +RTS -N$(nproc) -RTS 2>&1 | tee proofs/${{ matrix.lemma }}_result.txt
-          if grep -q "verified" proofs/${{ matrix.lemma }}_result.txt; then
-            echo "## ${{ matrix.lemma }}: ✅ مُثبَت" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "## ${{ matrix.lemma }}: ❌ فشل" >> $GITHUB_STEP_SUMMARY
+          sudo apt-get update -qq
+          sudo apt-get install -y tamarin-prover
+
+      - name: Prove ${{ matrix.lemma }}
+        run: |
+          LEMMA="${{ matrix.lemma }}"
+          # Override if workflow_dispatch specifies a specific lemma
+          if [[ -n "${{ github.event.inputs.lemma }}" ]]; then
+            LEMMA="${{ github.event.inputs.lemma }}"
+          fi
+
+          TIMEOUT="${{ github.event.inputs.timeout || '45' }}"
+
+          timeout "${TIMEOUT}m" tamarin-prover atheer_protocol.spthy \
+            --prove="${LEMMA}" \
+            ${{ env.TAMARIN_RTS_FLAGS }} \
+            2>&1 | tee "${LEMMA}.log"
+
+          EXIT_CODE=$?
+
+          if [ $EXIT_CODE -eq 124 ]; then
+            echo "⏱️ ${LEMMA}: TIMEOUT بعد ${TIMEOUT} دقيقة"
             exit 1
           fi
 
-  # ===========================================================
-  # JOB 4: ملخص التقرير النهائي
-  # ===========================================================
+          if grep -q "verified" "${LEMMA}.log"; then
+            echo "✅ ${LEMMA}: verified"
+          elif grep -q "falsified" "${LEMMA}.log"; then
+            echo "❌ ${LEMMA}: FALSIFIED — يوجد هجوم مضاد!"
+            exit 1
+          else
+            echo "❌ ${LEMMA}: نتيجة غير محددة"
+            exit 1
+          fi
+
+      - name: Upload proof log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: proof-${{ matrix.lemma }}
+          path: ${{ matrix.lemma }}.log
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # JOB 4: ملخص النتائج
+  # ─────────────────────────────────────────────────────────────────────────
   summary:
-    name: '📊 ملخص النتائج'
-    runs-on: ubuntu-22.04
-    needs: verify-security-lemmas
+    name: "📊 ملخص النتائج"
+    runs-on: ubuntu-latest
+    needs: [verify-executability, verify-security-lemmas]
     if: always()
     steps:
-      - name: عرض التقرير
+      - name: Generate summary
         run: |
-          echo "# 📋 تقرير التحقق الرسمي — Atheer Protocol" >> $GITHUB_STEP_SUMMARY
-          echo "تم فحص البراهين الأمنية العشرة بنجاح." >> $GITHUB_STEP_SUMMARY
+          echo "## نتائج التحقق الرسمي — أثير v2.0" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| البرهان | النوع | النتيجة |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|-------|---------|" >> $GITHUB_STEP_SUMMARY
+
+          EXEC="${{ needs.verify-executability.result }}"
+          [[ "$EXEC" == "success" ]] && ICON="✅" || ICON="❌"
+          echo "| Executability | exists-trace | $ICON $EXEC |" >> $GITHUB_STEP_SUMMARY
+
+          for lemma in Authentication Anti_Replay Session_Integrity Seed_Secrecy \
+                       Distance_Bounding Device_Integrity Counter_Monotonicity \
+                       Merchant_ZeroKnowledge Switch_NonFrameability; do
+            RESULT="${{ needs.verify-security-lemmas.result }}"
+            [[ "$RESULT" == "success" ]] && ICON="✅" || ICON="❌"
+            echo "| $lemma | all-traces | $ICON |" >> $GITHUB_STEP_SUMMARY
+          done
