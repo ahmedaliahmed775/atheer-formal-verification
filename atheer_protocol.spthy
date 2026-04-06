@@ -412,7 +412,7 @@ lemma Session_Integrity:
             SessionArmed(sid) @ #ta
             & SessionExpired(sid) @ #te
             & HWTimedSession(sid, hw_ctr) @ #ta
-            & #ta < #tp & #tp <= #te"
+            & #ta < #tp & (#tp = #te | #tp < #te)"
 
 lemma Seed_Secrecy:
     "All seed_id client_id ms #ts.
