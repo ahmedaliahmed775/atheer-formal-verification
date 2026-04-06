@@ -164,12 +164,12 @@ rule Client_Attest_And_KeyGen:
     , Out( <~device_id, pk(~sk), play_integrity_token(~device_id, pk(~sk))> ) ]
 
 rule Switch_Verify_And_Register:
-    [ In( <device_id, pk_client, pi_token> ) ]
+    [ In( <device_id, pk_client, pi_token> ), Fr(~client_id) ] // أضفنا Fr(~client_id)
   --[ Eq(pi_verify(pi_token, google_attest_pk, pk_client), true)
     , IntegrityVerified(device_id)
-    , SwitchRegisteredClient(device_id, pk_client) ]-> 
+    , SwitchRegisteredClient(~client_id, device_id, pk_client) ]-> 
     [ !DeviceAttested(device_id)
-    , !Switch_Registry(device_id, pk_client) ]
+    , !Switch_Registry(~client_id, device_id, pk_client) ] // تخزين ثلاثي (معرف، جهاز، مفتاح)
 
 
 /* =========================================================================
@@ -193,13 +193,13 @@ rule HW_Counter_Init:
     [ !HW_Counter(~dev_id, ~ctr_init) ]
 
 rule Switch_Provision_Seed:
-    [ !Switch_Registry(device_id, pk_client)
+    [ !Switch_Registry(cid, device_id, pk_client) // استدعاء السجل الثلاثي
     , !DeviceAttested(device_id)
     , Fr(~master_seed)
     , Fr(~seed_id) ]
   --[ SeedProvisioned(device_id)
-    , SwitchIssuedSeed(~seed_id, device_id, ~master_seed) ]-> 
-    [ !Seed_Registry(~seed_id, device_id, ~master_seed)
+    , SwitchIssuedSeed(~seed_id, cid, ~master_seed) ]-> 
+    [ !Seed_Registry(~seed_id, cid, ~ms)
     , Out(seed_encrypt(~master_seed, pk_client)) ]
 
 rule Client_Seal_Seed:
@@ -248,7 +248,7 @@ rule Client_Send_APDU:
         luk      = derive_luk(master_seed_val, hw_ctr)
         db_proof = db_response(chall, sk_tee)
         pabc_data = pabc_construct(luk, ~n, hw_ctr, amount, merchant_id, db_proof)
-        pabc_sig = sign(sk_tee, pabc_data)
+        pabc_sig = sign(pabc_data, sk_tee)
         /* Standard Tuple instead of unparseable function */
         apdu = <luk, amount, ~atc, hw_ctr, ~n, pabc_sig, db_proof>
     in
@@ -298,25 +298,15 @@ rule Switch_Verify_And_Settle:
         pabc_data = pabc_construct(luk, nonce_pabc, hw_ctr_pabc, amount, mid, db_prf)
     in
     [ In( < apdu_in, mid, hw_ctr_cr, nonce_cr, merch_sig > )
-    , !Switch_Registry(client_id, pk_cl)
+    , !Switch_Registry(client_id, device_id, pk_cl) // مطابقة السجل الثلاثي
     , !Seed_Registry(seed_id, client_id, master_seed)
     , !Merchant_PubKey(mid, pk_merch)
     , Fr(~tx_id) ]
-  --[ /* ① Merchant signature valid */
-      Eq(verify(merch_sig, h(apdu_in), pk_merch), true),
-
-      /* ② PABC signature valid */
-      Eq(verify(pabc_sig, pabc_data, pk_cl), true),
-
-      /* ③ Ensure LUK matches derived seed */
-      Eq(luk, derive_luk(master_seed, hw_ctr_pabc)),
-
-      SwitchVerifiedSignature(client_id, luk, pabc_sig, pk_cl),
-      SwitchVerifiedProximity(client_id, db_prf),
-      SwitchAcceptedNonce(nonce_cr),
-      ConsumedLUK(luk),
-      SwitchSettled(mid, ~tx_id),
-      TransactionSettled(client_id, mid, luk, ~tx_id)
+  --[ Eq(verify(merch_sig, h(apdu_in), pk_merch), true)
+    , Eq(verify(pabc_sig, pabc_data, pk_cl), true)
+    , Eq(luk, derive_luk(master_seed, hw_ctr_pabc))
+    , ConsumedLUK(luk)
+    , TransactionSettled(client_id, mid, luk, ~tx_id)
     ]-> 
     [ Out(settle_ack(~tx_id, 'SUCCESS')) ]
 
