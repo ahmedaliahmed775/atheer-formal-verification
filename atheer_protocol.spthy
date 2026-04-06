@@ -205,7 +205,7 @@ restriction Merchant_Must_Be_Registered:
 rule Client_Attest_Device:
     [ Fr(~pi_nonce)
     , Fr(~device_id) ]
-  --[ DeviceAttesting(~device_id) ]-->
+  --[ DeviceAttesting(~device_id) ]->
     [ ClientAttesting(~device_id,
                       play_integrity_token(~device_id, ~pi_nonce),
                       ~pi_nonce)
@@ -218,7 +218,7 @@ rule Switch_Verify_Integrity:
                    google_attest_pk,
                    pi_nonce),
          true)
-    , IntegrityVerified(device_id) ]-->
+    , IntegrityVerified(device_id) ]->
     [ !DeviceAttested(device_id) ]
 
 
@@ -236,7 +236,7 @@ rule Client_TEE_KeyGen:
     [ Fr(~sk)
     , Fr(~device_id)
     , !DeviceAttested(~device_id) ]   /* Integrity gate (Enhancement 3)    */
-  --[ TEE_KeyGenerated(~device_id, pk(~sk)) ]-->
+  --[ TEE_KeyGenerated(~device_id, pk(~sk)) ]->
     [ !TEE_PrivKey(~device_id, ~sk)   /* TEE enclave, never to Out */
     , Out(pk(~sk)) ]                  /* Public key registered     */
 
@@ -245,7 +245,7 @@ rule Merchant_KeyGen:
     [ Fr(~merchant_id)
     , Fr(~sk_merch) ]
   --[ MerchantRegistered(~merchant_id)
-    , MerchantKeyGenerated(~merchant_id, pk(~sk_merch)) ]-->
+    , MerchantKeyGenerated(~merchant_id, pk(~sk_merch)) ]->
     [ !Merchant_PrivKey(~merchant_id, ~sk_merch)
     , !Merchant_PubKey(~merchant_id, pk(~sk_merch))
     , Out(pk(~sk_merch)) ]
@@ -254,7 +254,7 @@ rule Merchant_KeyGen:
 rule Switch_Register_Client:
     [ In(pk_client)
     , Fr(~client_id) ]
-  --[ SwitchRegisteredClient(~client_id, pk_client) ]-->
+  --[ SwitchRegisteredClient(~client_id, pk_client) ]->
     [ !Switch_Registry(~client_id, pk_client) ]
 
 /* --- Rule 1.4: Hardware Counter Initialization -------------------------- */
@@ -262,7 +262,7 @@ rule HW_Counter_Init:
     [ Fr(~dev_id)
     , Fr(~ctr_init) ]
   --[ HWCounter(~dev_id, ~ctr_init)
-    , CounterInitialized(~dev_id, ~ctr_init) ]-->
+    , CounterInitialized(~dev_id, ~ctr_init) ]->
     [ !HW_Counter(~dev_id, ~ctr_init) ]
 
 /* --- Rule 1.5: Switch Provisions Master Seed (Enhancement 1) ------------ */
@@ -274,7 +274,7 @@ rule Switch_Provision_Seed:
     , Fr(~master_seed)
     , Fr(~seed_id) ]
   --[ SeedProvisioned(device_id)
-    , SwitchIssuedSeed(~seed_id, client_id, ~master_seed) ]-->
+    , SwitchIssuedSeed(~seed_id, client_id, ~master_seed) ]->
     [ !Seed_Registry(~seed_id, client_id, ~master_seed)
     , Out(seed_encrypt(~master_seed, pk_client)) ]
 
@@ -283,7 +283,7 @@ rule Client_Seal_Seed:
     [ In(seed_enc)
     , !TEE_PrivKey(device_id, sk_any) /* Device has valid TEE key             */
     , Fr(~device_ref) ]
-  --[ ClientSealedSeed(device_id) ]-->
+  --[ ClientSealedSeed(device_id) ]->
     /* Unseal using sk is implicit: seed = seed_decrypt(seed_enc, sk).
        We model the resulting sealed seed in TEE storage.                   */
     [ !TEE_MasterSeed(device_id, seed_enc) ]
@@ -306,7 +306,7 @@ rule Client_Biometric_Auth:
     , Fr(~bio_challenge) ]
   --[ BiometricVerified(device_id, ~session_id)
     , SessionArmed(~session_id)
-    , HWTimedSession(~session_id, hw_ctr) ]-->
+    , HWTimedSession(~session_id, hw_ctr) ]->
     [ ArmedSession(device_id, ~session_id, hw_ctr) ]
 
 /* --- Rule 2.2: Distance-Bounding Challenge-Response (Enhancement 2) ----- */
@@ -316,7 +316,7 @@ rule Merchant_DB_Challenge:
     [ Fr(~chall)
     , Fr(~round_id)
     , !Merchant_PrivKey(merchant_id, sk_merch) ]
-  --[ DB_Challenge(~chall, ~round_id) ]-->
+  --[ DB_Challenge(~chall, ~round_id) ]->
     [ MerchantWaiting_DB(merchant_id, ~chall, ~round_id)
     , Out(~chall) ]
 
@@ -326,7 +326,7 @@ rule Client_DB_Response:
     , ArmedSession(device_id, session_id, hw_ctr)
     , Fr(~round_id) ]
   --[ DB_Response(chall, ~round_id)
-    , ClientProvedProximity(device_id, chall) ]-->
+    , ClientProvedProximity(device_id, chall) ]->
     [ ClientProximate(device_id, session_id, hw_ctr, chall,
                       db_response(chall, sk_tee))
     , ArmedSession(device_id, session_id, hw_ctr) ]   /* session survives  */
@@ -378,7 +378,7 @@ rule Merchant_Receive_APDU:
     , Fr(~hw_ctr_merch) ]
   --[ MerchantReceivedAPDU(merchant_id, apdu)
     , MerchantForwarding(merchant_id, ~tx_nonce)
-    , DB_VerifiedProximity(merchant_id, chall) ]-->
+    , DB_VerifiedProximity(merchant_id, chall) ]->
     [ MerchantHoldsChargeRequest(
           merchant_id,
           charge_request(apdu, merchant_id, ~hw_ctr_merch, ~tx_nonce,
@@ -392,7 +392,7 @@ rule Merchant_Receive_APDU:
 /* --- Rule 3.1: Merchant Sends ChargeRequest over Private APN ------------ */
 rule Merchant_Send_ChargeRequest:
     [ MerchantHoldsChargeRequest(merchant_id, cr) ]
-  --[ MerchantSentChargeRequest(merchant_id, cr) ]-->
+  --[ MerchantSentChargeRequest(merchant_id, cr) ]->
     [ Out(cr)
     , SentOnAPN(merchant_id, cr) ]
 
@@ -429,13 +429,13 @@ rule Switch_Verify_And_Settle:
       /* ⑥ Settlement */
       SwitchSettled(mid, ~tx_id),
       TransactionSettled(client_id, mid, luk, ~tx_id)
-    ]-->
+    ]->
     [ Out(settle_ack(~tx_id, 'SUCCESS')) ]
 
 /* --- Rule 3.3: Switch DB Init ------------------------------------------- */
 rule Switch_Init:
     [ Fr(~db_id) ]
-  --[ SwitchInitialized(~db_id) ]-->
+  --[ SwitchInitialized(~db_id) ]->
     [ !SwitchDB(~db_id) ]
 
 
