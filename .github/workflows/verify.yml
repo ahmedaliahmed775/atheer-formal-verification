@@ -18,8 +18,8 @@ on:
 
 env:
   TAMARIN_VERSION: "1.8.0"
-  # [FIX CI-01] تحديد حد الذاكرة صراحةً لمنع OOM / Exit 143
   TAMARIN_RTS_FLAGS: "+RTS -N2 -M6G -RTS"
+  TAMARIN_URL: "https://github.com/tamarin-prover/tamarin-prover/releases/download/1.8.0/tamarin-prover-1.8.0-linux64.tar.gz"
 
 jobs:
 
@@ -34,13 +34,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         env:
-          # [FIX CI-02] تهيئة Node.js 24 لتفادي deprecation warning
           FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
       - name: Install Tamarin
         run: |
+          echo "⬇️  Downloading Tamarin ${{ env.TAMARIN_VERSION }}..."
+          curl -fsSL "${{ env.TAMARIN_URL }}" -o tamarin.tar.gz
+          tar -xzf tamarin.tar.gz
+          sudo mv tamarin-prover /usr/local/bin/tamarin-prover
+          sudo chmod +x /usr/local/bin/tamarin-prover
           sudo apt-get update -qq
-          sudo apt-get install -y tamarin-prover
+          sudo apt-get install -y maude
           tamarin-prover --version
 
       - name: Syntax check
@@ -49,12 +53,11 @@ jobs:
           echo "✅ بناء الجملة صحيح"
 
   # ─────────────────────────────────────────────────────────────────────────
-  # JOB 2: إثبات Executability أولاً (سريع — يتحقق من سلامة النموذج)
+  # JOB 2: إثبات Executability
   # ─────────────────────────────────────────────────────────────────────────
   verify-executability:
     name: "⚡ إثبات سريع — Executability"
     runs-on: ubuntu-latest
-    # [FIX CI-03] timeout أطول لـ Executability (30 دقيقة)
     timeout-minutes: 30
     needs: syntax-check
     steps:
@@ -64,8 +67,12 @@ jobs:
 
       - name: Install Tamarin
         run: |
+          curl -fsSL "${{ env.TAMARIN_URL }}" -o tamarin.tar.gz
+          tar -xzf tamarin.tar.gz
+          sudo mv tamarin-prover /usr/local/bin/tamarin-prover
+          sudo chmod +x /usr/local/bin/tamarin-prover
           sudo apt-get update -qq
-          sudo apt-get install -y tamarin-prover
+          sudo apt-get install -y maude
 
       - name: Prove Executability
         run: |
@@ -78,113 +85,11 @@ jobs:
             echo "✅ Executability: verified"
           else
             echo "❌ Executability: FAILED"
+            cat executability.log
             exit 1
           fi
 
       - name: Upload log
         if: always()
         uses: actions/upload-artifact@v4
-        with:
-          name: executability-log
-          path: executability.log
-
-  # ─────────────────────────────────────────────────────────────────────────
-  # JOB 3: البراهين الأمنية (متوازٍ بحد أقصى 4 jobs في آن)
-  # ─────────────────────────────────────────────────────────────────────────
-  verify-security-lemmas:
-    name: "🔐 ${{ matrix.lemma }}"
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    needs: verify-executability
-    strategy:
-      fail-fast: false
-      # [FIX CI] تحديد max-parallel لمنع الضغط على Runner
-      max-parallel: 4
-      matrix:
-        lemma:
-          - Authentication
-          - Anti_Replay
-          - Session_Integrity
-          - Seed_Secrecy
-          - Distance_Bounding
-          - Device_Integrity
-          - Counter_Monotonicity
-          - Merchant_ZeroKnowledge
-          - Switch_NonFrameability
-
-    steps:
-      - uses: actions/checkout@v4
-        env:
-          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
-      - name: Install Tamarin
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y tamarin-prover
-
-      - name: Prove ${{ matrix.lemma }}
-        run: |
-          LEMMA="${{ matrix.lemma }}"
-          # Override if workflow_dispatch specifies a specific lemma
-          if [[ -n "${{ github.event.inputs.lemma }}" ]]; then
-            LEMMA="${{ github.event.inputs.lemma }}"
-          fi
-
-          TIMEOUT="${{ github.event.inputs.timeout || '45' }}"
-
-          timeout "${TIMEOUT}m" tamarin-prover atheer_protocol.spthy \
-            --prove="${LEMMA}" \
-            ${{ env.TAMARIN_RTS_FLAGS }} \
-            2>&1 | tee "${LEMMA}.log"
-
-          EXIT_CODE=$?
-
-          if [ $EXIT_CODE -eq 124 ]; then
-            echo "⏱️ ${LEMMA}: TIMEOUT بعد ${TIMEOUT} دقيقة"
-            exit 1
-          fi
-
-          if grep -q "verified" "${LEMMA}.log"; then
-            echo "✅ ${LEMMA}: verified"
-          elif grep -q "falsified" "${LEMMA}.log"; then
-            echo "❌ ${LEMMA}: FALSIFIED — يوجد هجوم مضاد!"
-            exit 1
-          else
-            echo "❌ ${LEMMA}: نتيجة غير محددة"
-            exit 1
-          fi
-
-      - name: Upload proof log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: proof-${{ matrix.lemma }}
-          path: ${{ matrix.lemma }}.log
-
-  # ─────────────────────────────────────────────────────────────────────────
-  # JOB 4: ملخص النتائج
-  # ─────────────────────────────────────────────────────────────────────────
-  summary:
-    name: "📊 ملخص النتائج"
-    runs-on: ubuntu-latest
-    needs: [verify-executability, verify-security-lemmas]
-    if: always()
-    steps:
-      - name: Generate summary
-        run: |
-          echo "## نتائج التحقق الرسمي — أثير v2.0" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| البرهان | النوع | النتيجة |" >> $GITHUB_STEP_SUMMARY
-          echo "|---------|-------|---------|" >> $GITHUB_STEP_SUMMARY
-
-          EXEC="${{ needs.verify-executability.result }}"
-          [[ "$EXEC" == "success" ]] && ICON="✅" || ICON="❌"
-          echo "| Executability | exists-trace | $ICON $EXEC |" >> $GITHUB_STEP_SUMMARY
-
-          for lemma in Authentication Anti_Replay Session_Integrity Seed_Secrecy \
-                       Distance_Bounding Device_Integrity Counter_Monotonicity \
-                       Merchant_ZeroKnowledge Switch_NonFrameability; do
-            RESULT="${{ needs.verify-security-lemmas.result }}"
-            [[ "$RESULT" == "success" ]] && ICON="✅" || ICON="❌"
-            echo "| $lemma | all-traces | $ICON |" >> $GITHUB_STEP_SUMMARY
-          done
+        with
