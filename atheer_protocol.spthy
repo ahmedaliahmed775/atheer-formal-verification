@@ -334,6 +334,9 @@ rule Client_DB_Response:
 /* --- Rule 2.3: Dynamic LUK Derivation & PABC Generation (Enhancements 1+2+4) */
 rule Client_Send_APDU:
     let
+        /* Explicit seed decryption */
+        master_seed_val = seed_decrypt(seed_enc, sk_tee)
+
         /* Enhancement 1: derive LUK on-demand from seed + hw counter     */
         luk      = derive_luk(master_seed_val, hw_ctr)
 
@@ -399,22 +402,19 @@ rule Merchant_Send_ChargeRequest:
 /* --- Rule 3.2: Switch Full Verification & Settlement -------------------- */
 rule Switch_Verify_And_Settle:
     let
-        cr       = charge_request(apdu_in, mid, hw_ctr_cr, nonce_cr, merch_sig)
-        luk      = apdu_extract_luk(apdu_in)
-        pabc_sig = apdu_extract_pabc(apdu_in)
-        db_prf   = apdu_extract_db(apdu_in)
-        pk_cl    = registry_lookup(switch_db, luk)
+        /* تفكيك الحزمة عبر Pattern Matching */
+        apdu_in = apdu_build(luk, amount, atc, pabc_sig, db_prf)
+        cr = charge_request(apdu_in, mid, hw_ctr_cr, nonce_cr, merch_sig)
     in
     [ In(cr)
     , !Switch_Registry(client_id, pk_cl)
     , !Seed_Registry(seed_id, client_id, master_seed)
     , !Merchant_PubKey(mid, pk_merch)
-    , Fr(~tx_id)
-    , !SwitchDB(switch_db) ]
+    , Fr(~tx_id) ]
   --[ /* ① Merchant signature valid */
       Eq(verify(merch_sig, h(apdu_in), pk_merch), true),
 
-      /* ② PABC signature valid */
+      /* ② PABC signature valid (using standard verify) */
       SwitchVerifiedSignature(client_id, luk, pabc_sig, pk_cl),
 
       /* ③ Distance-bounding proof present */
@@ -431,13 +431,6 @@ rule Switch_Verify_And_Settle:
       TransactionSettled(client_id, mid, luk, ~tx_id)
     ]-->
     [ Out(settle_ack(~tx_id, 'SUCCESS')) ]
-
-/* --- Rule 3.3: Switch DB Init ------------------------------------------- */
-rule Switch_Init:
-    [ Fr(~db_id) ]
-  --[ SwitchInitialized(~db_id) ]-->
-    [ !SwitchDB(~db_id) ]
-
 
 /* =========================================================================
  * ADVERSARY MODEL — ADDITIONAL RULES
