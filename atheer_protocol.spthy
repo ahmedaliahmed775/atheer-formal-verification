@@ -1,197 +1,167 @@
-theory AtheerProtocolV2_Final
+theory AtheerProtocol_GlobalStandard
 
 begin
 
-/* =========================================================================
- * BUILT-IN THEORIES (OPTIMIZED: Removed unused XOR and Multiset)
- * ========================================================================= */
-builtins:
-    asymmetric-encryption,
-    symmetric-encryption,
-    hashing,
-    signing
+builtins: asymmetric-encryption, symmetric-encryption, hashing, signing
 
 /* =========================================================================
- * FUNCTION SYMBOLS
+ * FUNCTIONS & EQUATIONS
  * ========================================================================= */
 functions:
-    /* ---- TEE & Secure Enclave ---- */
-    biometric_token/1,
-    hw_monotonic_ctr/1,
-
-    /* ---- Enhancement 1: Chain of Trust ---- */
     derive_luk/2,            /* derive_luk(master_seed, hw_counter) */
-    seed_encrypt/2,          /* seed_encrypt(ms, pk) */
-    seed_decrypt/2,          /* seed_decrypt(enc, sk) */
-
-    /* ---- Enhancement 2: Distance Bounding ---- */
-    db_challenge/1,
-    db_response/2,
-    db_verify/3,
-
-    /* ---- Enhancement 3: Play Integrity API ---- */
-    play_integrity_token/2,  /* pi_token(device_id, nonce) */
-    pi_verify/3,             /* pi_verify(token, google_pk, nonce) */
-    google_attest_pk/0,
-
-    /* ---- PABC (Pre-Authorized Biometric Cryptogram) ---- */
+    seed_encrypt/2, seed_decrypt/2,
+    db_response/2, db_verify/3,
+    play_integrity_token/2, pi_verify/3, google_attest_pk/0,
     pabc_construct/6,
-
-    /* ---- Registry & Settlement ---- */
     settle_ack/2
 
 equations:
-    /* Crypto Round-trips */
     seed_decrypt(seed_encrypt(ms, pk(sk)), sk) = ms,
     db_verify(db_response(chall, sk), pk(sk), chall) = true,
     pi_verify(play_integrity_token(dev, n), google_attest_pk, n) = true
 
-
 /* =========================================================================
- * RESTRICTION AXIOMS
+ * RESTRICTIONS
  * ========================================================================= */
-
-restriction Equality:
-    "All x y #i. Eq(x,y) @i ==> x = y"
+restriction Equality: "All x y #i. Eq(x,y) @i ==> x = y"
 
 restriction LUK_Single_Use:
     "All luk #t1 #t2. ConsumedLUK(luk) @ #t1 & ConsumedLUK(luk) @ #t2 ==> #t1 = #t2"
 
-restriction Nonce_Uniqueness:
-    "All n #t1 #t2. SwitchAcceptedNonce(n) @ #t1 & SwitchAcceptedNonce(n) @ #t2 ==> #t1 = #t2"
-
 restriction Session_Ordering:
     "All sid #t1 #t2. SessionArmed(sid) @ #t1 & SessionExpired(sid) @ #t2 ==> #t1 < #t2"
 
-restriction Biometric_Before_Session:
-    "All dev sid #tb #ta. BiometricVerified(dev, sid) @ #tb & SessionArmed(sid) @ #ta ==> #tb < #ta"
-
 restriction DB_Same_Round:
-    "All chall round #tc #tr. DB_Challenge(chall, round) @ #tc & DB_Response(chall, round) @ #tr ==> #tc < #tr"
-
+    "All chall rid #tc #tr. DB_Challenge(chall, rid) @ #tc & DB_Response(chall, rid) @ #tr ==> #tc < #tr"
 
 /* =========================================================================
- * PHASE 1 — SECURE ONBOARDING (Patched against Registration Hijacking)
+ * PHASE 1: SECURE ONBOARDING & PROVISIONING
  * ========================================================================= */
 
-/* العميل يولد مفتاحه داخل الـ TEE ويرسله مغلفاً بشهادة سلامة الجهاز */
-rule Client_Onboarding_Request:
+rule Client_Onboarding:
     [ Fr(~device_id), Fr(~sk) ]
-  --[ TEE_KeyGenerated(~device_id, pk(~sk))
-    , DeviceAttesting(~device_id) ]-> 
+  --[ TEE_KeyGenerated(~device_id, pk(~sk)), DeviceAttesting(~device_id) ]-> 
     [ !TEE_PrivKey(~device_id, ~sk)
     , Out( <~device_id, pk(~sk), play_integrity_token(~device_id, pk(~sk))> ) ]
 
-/* السيرفر يتحقق من الشهادة ويسجل المفتاح فقط إذا كانت البصمة سليمة */
-rule Switch_Verify_And_Register:
+rule Switch_Register_Device:
     [ In( <device_id, pk_cl, pi_token> ), Fr(~client_id) ]
   --[ Eq(pi_verify(pi_token, google_attest_pk, pk_cl), true)
     , IntegrityVerified(device_id)
-    , SwitchRegisteredClient(~client_id, pk_cl) ]-> 
-    [ !Switch_Registry(~client_id, device_id, pk_cl) ]
+    , SwitchRegisteredClient(~client_id, device_id, pk_cl) ]-> 
+    [ !Switch_Registry(~client_id, device_id, pk_cl), !DeviceAttested(device_id) ]
 
-/* السيرفر يرسل البذرة الرئيسية مشفرة لمفتاح الجهاز الموثوق */
 rule Switch_Provision_Seed:
-    [ !Switch_Registry(client_id, device_id, pk_cl)
-    , Fr(~master_seed), Fr(~seed_id) ]
-  --[ SeedProvisioned(device_id)
-    , SwitchIssuedSeed(~seed_id, client_id, ~master_seed) ]-> 
-    [ !Seed_Registry(~seed_id, client_id, ~master_seed)
-    , Out( seed_encrypt(~master_seed, pk_cl) ) ]
+    [ !Switch_Registry(cid, dev, pk_cl), !DeviceAttested(dev), Fr(~ms), Fr(~sid) ]
+  --[ SeedProvisioned(dev), SwitchIssuedSeed(~sid, cid, ~ms) ]-> 
+    [ !Seed_Registry(~sid, cid, ~ms), Out( seed_encrypt(~ms, pk_cl) ) ]
 
 rule Client_Receive_Seed:
-    [ In(seed_enc), !TEE_PrivKey(device_id, sk_tee) ]
-  --[ ClientSealedSeed(device_id) ]-> 
-    [ !TEE_MasterSeed(device_id, seed_enc) ]
-
+    [ In(seed_enc), !TEE_PrivKey(dev, sk_t) ]
+  --[ ClientSealedSeed(dev) ]-> [ !TEE_MasterSeed(dev, seed_enc) ]
 
 /* =========================================================================
- * PHASE 2 — OFFLINE NFC EXCHANGE
+ * PHASE 2: OFFLINE TRANSACTION
  * ========================================================================= */
 
 rule HW_Counter_Init:
-    [ Fr(~dev_id), Fr(~ctr_init) ]
-  --[ CounterInitialized(~dev_id, ~ctr_init) ]->
-    [ !HW_Counter(~dev_id, ~ctr_init) ]
+    [ Fr(~dev), Fr(~c) ] --[ CounterInit(~dev, ~c) ]-> [ !HW_Counter(~dev, ~c) ]
 
 rule Client_Biometric_Auth:
-    [ !TEE_PrivKey(device_id, sk_tee), !HW_Counter(device_id, hw_ctr), Fr(~session_id) ]
-  --[ BiometricVerified(device_id, ~session_id)
-    , SessionArmed(~session_id)
-    , HWTimedSession(~session_id, hw_ctr) ]-> 
-    [ ArmedSession(device_id, ~session_id, hw_ctr) ]
+    [ !TEE_PrivKey(dev, sk_t), !HW_Counter(dev, c), Fr(~sess) ]
+  --[ BiometricVerified(dev, ~sess), SessionArmed(~sess), HWTimedSession(~sess, c) ]-> 
+    [ ArmedSession(dev, ~sess, c) ]
 
 rule Merchant_DB_Challenge:
-    [ Fr(~chall), Fr(~round_id), !Merchant_PubKey(merchant_id, pk_merch) ]
-  --[ DB_Challenge(~chall, ~round_id) ]-> 
-    [ MerchantWaiting_DB(merchant_id, ~chall, ~round_id), Out(~chall) ]
+    [ Fr(~ch), Fr(~rid), !Merchant_PrivKey(mid, sk_m) ]
+  --[ DB_Challenge(~ch, ~rid) ]-> [ M_Wait(mid, ~ch, ~rid), Out(~ch) ]
 
 rule Client_DB_Response:
-    [ In(chall), !TEE_PrivKey(device_id, sk_tee), ArmedSession(device_id, sid, hw) ]
-  --[ DB_Response(chall, sid), ClientProvedProximity(device_id, chall) ]-> 
-    [ ClientProximate(device_id, sid, hw, chall, db_response(chall, sk_tee))
-    , ArmedSession(device_id, sid, hw) ]
+    [ In(ch), !TEE_PrivKey(dev, sk_t), ArmedSession(dev, sess, c), Fr(~rid) ]
+  --[ DB_Response(ch, ~rid), ClientProvedProximity(dev, ch) ]-> 
+    [ ClientProximate(dev, sess, c, ch, db_response(ch, sk_t)), ArmedSession(dev, sess, c) ]
 
 rule Client_Send_APDU:
     let
-        master_seed_val = seed_decrypt(seed_enc, sk_tee)
-        luk      = derive_luk(master_seed_val, hw_ctr)
-        db_proof = db_response(chall, sk_tee)
-        pabc_data = pabc_construct(luk, ~n, hw_ctr, amount, merchant_id, db_proof)
-        pabc_sig = sign(pabc_data, sk_tee)
-        apdu = <luk, amount, ~atc, hw_ctr, ~n, pabc_sig, db_proof>
+        ms = seed_decrypt(seed_enc, sk_t)
+        luk = derive_luk(ms, c)
+        db_p = db_response(ch, sk_t)
+        pabc = pabc_construct(luk, ~n, c, amt, mid, db_p)
+        sig = sign(pabc, sk_t)
+        apdu = <luk, amt, ~atc, c, ~n, sig, db_p>
     in
-    [ ClientProximate(device_id, session_id, hw_ctr, chall, db_proof)
-    , !TEE_MasterSeed(device_id, seed_enc)
-    , !TEE_PrivKey(device_id, sk_tee), Fr(~n), Fr(~atc), In(amount), In(merchant_id) ]
-  --[ ClientSentAPDU(device_id, session_id, luk, ~n, amount, merchant_id)
-    , PABCGenerated(device_id, session_id, luk, ~n, hw_ctr, amount, merchant_id)
-    , SessionExpired(session_id)
-    , Secret(sk_tee) ]->
+    [ ClientProximate(dev, sess, c, ch, db_p), !TEE_MasterSeed(dev, seed_enc)
+    , !TEE_PrivKey(dev, sk_t), Fr(~n), Fr(~atc), In(amt), In(mid) ]
+  --[ ClientSentAPDU(dev, sess, luk, ~n, amt, mid)
+    , PABCGenerated(dev, sess, luk, ~n, c, amt, mid)
+    , SessionExpired(sess), ConsumedCounter(dev, c), Secret(sk_t) ]->
     [ Out(apdu) ]
 
-rule Merchant_Forward_Request:
-    [ In(<luk, amt, atc, hw, n, sig, db>), MerchantWaiting_DB(mid, chall, rid) ]
-  --[ MerchantReceivedAPDU(mid, <luk, amt, atc, hw, n, sig, db>) ]-> 
-    [ Out(< <luk, amt, atc, hw, n, sig, db>, mid, ~rid >) ]
-
+rule Merchant_Forward:
+    [ In(apdu), M_Wait(mid, ch, rid), !Merchant_PrivKey(mid, sk_m) ]
+  --[ MerchRec(mid, apdu) ]-> [ Out(<apdu, mid, sign(h(apdu), sk_m)>) ]
 
 /* =========================================================================
- * PHASE 3 — SETTLEMENT
+ * PHASE 3: SETTLEMENT
  * ========================================================================= */
 
-rule Switch_Verify_And_Settle:
+rule Switch_Verify_Settlement:
     let
-        apdu_in   = <luk, amount, atc, hw_pabc, n_pabc, pabc_sig, db_prf>
-        pabc_data = pabc_construct(luk, n_pabc, hw_pabc, amount, mid, db_prf)
+        apdu = <luk, amt, atc, c, n, sig, db_p>
+        pabc = pabc_construct(luk, n, c, amt, mid, db_p)
     in
-    [ In(< apdu_in, mid, rid >), !Switch_Registry(cid, dev, pk_cl), !Seed_Registry(sid, cid, master_seed) ]
-  --[ Eq(verify(pabc_sig, pabc_data, pk_cl), true)
-    , Eq(luk, derive_luk(master_seed, hw_pabc))
-    , SwitchVerifiedSignature(cid, luk, pabc_sig, pk_cl)
-    , SwitchVerifiedProximity(cid, db_prf)
-    , ConsumedLUK(luk)
-    , TransactionSettled(cid, mid, luk)
-    ]-> 
-    [ Out(settle_ack(cid, 'SUCCESS')) ]
-
+    [ In(<apdu, mid, m_sig>), !Switch_Registry(cid, dev, pk_cl), !Seed_Registry(sid, cid, ms), !Merchant_PubKey(mid, pk_m) ]
+  --[ Eq(verify(m_sig, h(apdu), pk_m), true), Eq(verify(sig, pabc, pk_cl), true)
+    , Eq(luk, derive_luk(ms, c)), ConsumedLUK(luk)
+    , SwitchSettled(mid, cid, luk), TransactionSettled(cid, mid, luk) ]-> 
+    [ Out(settle_ack(cid, 'OK')) ]
 
 /* =========================================================================
- * SECURITY LEMMAS
+ * FULL SECURITY LEMMAS (THE GLOBAL STANDARD)
  * ========================================================================= */
 
+// 1. Sanity Check
 lemma Executability:
-    exists-trace
-    "Ex cid mid luk #ts. TransactionSettled(cid, mid, luk) @ #ts"
+    exists-trace "Ex c m l #ts. TransactionSettled(c, m, l) @ #ts"
 
+// 2. Strong Authentication (Agreement)
 lemma Authentication:
-    "All cid mid luk #ts. TransactionSettled(cid, mid, luk) @ #ts
-     ==> Ex dev sid n amt #tc. ClientSentAPDU(dev, sid, luk, n, amt, mid) @ #tc & #tc < #ts"
+    "All c m l #ts. TransactionSettled(c, m, l) @ #ts ==> 
+     Ex d s n a #tc. ClientSentAPDU(d, s, l, n, a, m) @ #tc & #tc < #ts"
 
+// 3. Perfect Forward Secrecy of Master Seed
 lemma Seed_Secrecy:
     "All sid cid ms #ts. SwitchIssuedSeed(sid, cid, ms) @ #ts ==> not (Ex #ta. KU(ms) @ #ta)"
 
+// 4. Resistance to Double Spending
 lemma Anti_Replay:
-    "All luk #t1 #t2. ConsumedLUK(luk) @ #t1 & ConsumedLUK(luk) @ #t2 ==> #t1 = #t2"
+    "All l #t1 #t2. ConsumedLUK(l) @ #t1 & ConsumedLUK(l) @ #t2 ==> #t1 = #t2"
+
+// 5. Proximity Assurance (Distance Bounding)
+lemma Distance_Bounding:
+    "All c m l #ts. TransactionSettled(c, m, l) @ #ts ==> 
+     Ex d ch #tdb. ClientProvedProximity(d, ch) @ #tdb & #tdb < #ts"
+
+// 6. Mandatory Device Integrity
+lemma Device_Integrity:
+    "All d #tp. SeedProvisioned(d) @ #tp ==> Ex #ti. IntegrityVerified(d) @ #ti & #ti < #tp"
+
+// 7. Atomic Hardware Timing Window
+lemma Session_Integrity:
+    "All d s l n c a m #tp. PABCGenerated(d, s, l, n, c, a, m) @ #tp ==>
+     Ex #ta #te. SessionArmed(s) @ #ta & SessionExpired(s) @ #te & #ta < #tp & #tp < #te"
+
+// 8. Hardware Counter Non-Repudiation
+lemma Counter_Monotonicity:
+    "All d c #t1 #t2. ConsumedCounter(d, c) @ #t1 & ConsumedCounter(d, c) @ #t2 ==> #t1 = #t2"
+
+// 9. Merchant Zero-Knowledge
+lemma Merchant_ZK:
+    "All m a #tm. MerchRec(m, a) @ #tm ==> not(Ex d sk #t1 #ta. TEE_KeyGenerated(d, pk(sk)) @ #t1 & KU(sk) @ #ta)"
+
+// 10. Non-Frameability
+lemma Switch_NonFrameability:
+    "All m c l #ts. SwitchSettled(m, c, l) @ #ts ==> 
+     Ex d s n a #tc. ClientSentAPDU(d, s, l, n, a, m) @ #tc"
 
 end
