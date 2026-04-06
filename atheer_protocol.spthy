@@ -493,7 +493,7 @@ lemma Session_Integrity:
             SessionArmed(sid) @ #ta
             & SessionExpired(sid) @ #te
             & HWTimedSession(sid, hw_ctr) @ #ta
-            & #ta < #tp & #tp <= #te"
+            & #ta < #tp & #tp < #te"
 
 /*
  * L4 — MASTER SEED SECRECY (Enhancement 1)
