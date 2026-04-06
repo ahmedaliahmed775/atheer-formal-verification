@@ -245,7 +245,7 @@ rule Merchant_KeyGen:
     [ Fr(~merchant_id)
     , Fr(~sk_merch) ]
   --[ MerchantRegistered(~merchant_id)
-    , MerchantKeyGenerated(~merchant_id, pk(~sk_merch)) ]-->
+    , MerchantKeyGenerated(~merchant_id, pk(~sk_merch)) ]--> 
     [ !Merchant_PrivKey(~merchant_id, ~sk_merch)
     , !Merchant_PubKey(~merchant_id, pk(~sk_merch))
     , Out(pk(~sk_merch)) ]
@@ -254,7 +254,7 @@ rule Merchant_KeyGen:
 rule Switch_Register_Client:
     [ In(pk_client)
     , Fr(~client_id) ]
-  --[ SwitchRegisteredClient(~client_id, pk_client) ]-->
+  --[ SwitchRegisteredClient(~client_id, pk_client) ]--> 
     [ !Switch_Registry(~client_id, pk_client) ]
 
 /* --- Rule 1.4: Hardware Counter Initialization -------------------------- */
@@ -274,7 +274,7 @@ rule Switch_Provision_Seed:
     , Fr(~master_seed)
     , Fr(~seed_id) ]
   --[ SeedProvisioned(device_id)
-    , SwitchIssuedSeed(~seed_id, client_id, ~master_seed) ]-->
+    , SwitchIssuedSeed(~seed_id, client_id, ~master_seed) ]--> 
     [ !Seed_Registry(~seed_id, client_id, ~master_seed)
     , Out(seed_encrypt(~master_seed, pk_client)) ]
 
@@ -283,7 +283,7 @@ rule Client_Seal_Seed:
     [ In(seed_enc)
     , !TEE_PrivKey(device_id, _)      /* Device has valid TEE key             */
     , Fr(~device_ref) ]
-  --[ ClientSealedSeed(device_id) ]-->
+  --[ ClientSealedSeed(device_id) ]--> 
     /* Unseal using sk is implicit: seed = seed_decrypt(seed_enc, sk).
        We model the resulting sealed seed in TEE storage.                   */
     [ !TEE_MasterSeed(device_id, seed_enc) ]
@@ -316,7 +316,7 @@ rule Merchant_DB_Challenge:
     [ Fr(~chall)
     , Fr(~round_id)
     , !Merchant_PrivKey(merchant_id, _) ]
-  --[ DB_Challenge(~chall, ~round_id) ]-->
+  --[ DB_Challenge(~chall, ~round_id) ]--> 
     [ MerchantWaiting_DB(merchant_id, ~chall, ~round_id)
     , Out(~chall) ]
 
@@ -359,8 +359,7 @@ rule Client_Send_APDU:
     , PABCGenerated(device_id, luk, ~n, hw_ctr, amount, merchant_id)
     , SessionExpired(session_id)
     , ConsumedCounter(device_id, hw_ctr)     /* Enhancement 4: counter used */
-    , Secret(sk_tee) ]
-    -->
+    , Secret(sk_tee) ]->
     /* The used counter slot is retired; next derivation uses ctr+1 */
     [ !UsedCounter(device_id, hw_ctr)
     , Out(apdu) ]
@@ -429,13 +428,13 @@ rule Switch_Verify_And_Settle:
       /* ⑥ Settlement */
       SwitchSettled(mid, ~tx_id),
       TransactionSettled(client_id, mid, luk, ~tx_id)
-    ]-->
+    ]--> 
     [ Out(settle_ack(~tx_id, 'SUCCESS')) ]
 
 /* --- Rule 3.3: Switch DB Init ------------------------------------------- */
 rule Switch_Init:
     [ Fr(~db_id) ]
-  --[ SwitchInitialized(~db_id) ]-->
+  --[ SwitchInitialized(~db_id) ]--> 
     [ !SwitchDB(~db_id) ]
 
 
@@ -451,7 +450,7 @@ rule Switch_Init:
  * ========================================================================= */
 
 rule Adv_Observe:
-    [ Out(x) ] --> [ KnowsPublic(x) ]
+    [ Out(x) ]-> [ KnowsPublic(x) ]
 
 
 /* =========================================================================
