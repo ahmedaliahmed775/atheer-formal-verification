@@ -20,45 +20,37 @@
  *    A monotonic hardware counter (TEE_counter) tracks derivations so the
  *    adversary cannot rewind the counter to re-derive a spent token.
  *
- * 2. THRESHOLD SIGNING via MPC (TEE-share + SIM-share)
- *    The ECDSA signing key sk is split into two shares:
- *      sk_tee  — stored in Android Hardware-backed Keystore (TEE enclave)
- *      sk_sim  — stored in SIM card secure element
- *    A valid signature requires BOTH shares: sign_mpc(sk_tee, sk_sim, msg).
- *    Compromise of TEE alone (full Android root) is insufficient.
- *
- * 3. DISTANCE BOUNDING (NFC round-trip timing)
+ * 2. DISTANCE BOUNDING (NFC round-trip timing)
  *    The merchant issues a fresh timing challenge (db_chall). The client
  *    returns a signed response within a tight timing window (modeled as
  *    a restriction: response must occur in the same "round" as challenge).
  *    This defeats relay attacks that introduce measurable network latency.
  *
- * 4. DEVICE INTEGRITY via Play Integrity API
+ * 3. DEVICE INTEGRITY via Play Integrity API
  *    Before any provisioning, the Switch verifies a Play Integrity Token
  *    (pi_token) signed by Google's attestation root. Only devices passing
  *    this check receive Master Seeds. Emulators and rooted devices are
  *    excluded at the attestation layer.
  *
- * 5. ATOMIC HARDWARE TIMING (Monotonic Counter for Armed Session)
+ * 4. ATOMIC HARDWARE TIMING (Monotonic Counter for Armed Session)
  *    The 60-second Armed Session is bound to a hardware monotonic counter
  *    value (hw_ctr_start) rather than the Android system clock. The session
  *    is valid only if the current counter value is within [start, start+W].
  *    Adversarial clock manipulation cannot extend the signing window.
  *
  * ============================================================================
- * SECURITY PROPERTIES (11 LEMMAS)
+ * SECURITY PROPERTIES (10 LEMMAS)
  * ============================================================================
  *   L1.  Authentication             — Settlement implies genuine client APDU
  *   L2.  Anti_Replay                — (LUK, Nonce) accepted at most once
  *   L3.  Session_Integrity          — PABC bound to hardware-timed window
  *   L4.  Seed_Secrecy               — Master Seed never learnable by adversary
- *   L5.  MPC_Split_Security         — TEE-only compromise cannot forge signature
- *   L6.  Distance_Bounding          — Settlement implies proximity proof
- *   L7.  Device_Integrity           — Only attested devices receive seeds
- *   L8.  Counter_Monotonicity       — Hardware counter cannot be rewound
- *   L9.  Merchant_ZeroKnowledge     — SoftPOS cannot extract client secrets
- *   L10. Switch_NonFrameability     — Switch never settles without verified sig
- *   L11. Executability              — (Sanity) At least one valid trace exists
+ *   L5.  Distance_Bounding          — Settlement implies proximity proof
+ *   L6.  Device_Integrity           — Only attested devices receive seeds
+ *   L7.  Counter_Monotonicity       — Hardware counter cannot be rewound
+ *   L8.  Merchant_ZeroKnowledge     — SoftPOS cannot extract client secrets
+ *   L9.  Switch_NonFrameability     — Switch never settles without verified sig
+ *   L10. Executability              — (Sanity) At least one valid trace exists
  * ============================================================================
  */
 
@@ -94,27 +86,18 @@ functions:
     seed_encrypt/2,          /* Encrypt seed for TEE pk: seed_encrypt(ms, pk)  */
     seed_decrypt/2,          /* seed_decrypt(seed_encrypt(ms,pk(sk)),sk) = ms  */
 
-    /* ---- Enhancement 2: MPC Threshold Signing (TEE-share + SIM-share) --- */
-    mpc_combine/3,           /* mpc_combine(sk_tee_share, sk_sim_share, msg)
-                                → threshold_signature                          */
-    mpc_verify/3,            /* mpc_verify(sig, pk_combined, msg) → bool      */
-    key_split/1,             /* Splits master sk into (share_tee, share_sim)  */
-    share_tee/1,             /* Extracts TEE share from split key             */
-    share_sim/1,             /* Extracts SIM share from split key             */
-    pk_combined/2,           /* Combined public key from two shares           */
-
-    /* ---- Enhancement 3: Distance Bounding ------------------------------- */
+    /* ---- Enhancement 2: Distance Bounding ------------------------------- */
     db_challenge/1,          /* Fresh NFC timing challenge from merchant       */
     db_response/2,           /* Client response: db_response(chall, sk) → resp*/
     db_verify/3,             /* Verify distance-bounding response             */
     db_round/1,              /* Models a timing round (same round = proximity) */
 
-    /* ---- Enhancement 4: Play Integrity API ------------------------------ */
+    /* ---- Enhancement 3: Play Integrity API ------------------------------ */
     play_integrity_token/2,  /* pi_token(device_id, nonce) → attestation token*/
     pi_verify/3,             /* pi_verify(pi_token, google_pk, nonce) → bool  */
     google_attest_pk/0,      /* Google's attestation public key (constant)    */
 
-    /* ---- Enhancement 5: Atomic Hardware Timing (Monotonic Counter) ------ */
+    /* ---- Enhancement 4: Atomic Hardware Timing (Monotonic Counter) ------ */
     within_hw_window/2,      /* within_hw_window(ctr_start, ctr_now) → bool  */
     hw_ctr_diff/2,           /* hw_ctr_diff(c1, c2) → elapsed ticks          */
 
@@ -149,25 +132,11 @@ equations:
     /* AES-GCM round-trip */
     aes_dec(aes_enc(m, k, iv), k, iv) = m,
 
-    /* MPC: combining shares reproduces the signing capability.
-       We model this as: mpc_combine applied to the two shares of sk
-       over message m equals sign(sk, m).
-       Formally: mpc_combine(share_tee(sk), share_sim(sk), m) = sign(sk, m) */
-    mpc_combine(share_tee(sk), share_sim(sk), m) = sign(sk, m),
-
     /* Distance-bounding response verification */
     db_verify(db_response(chall, sk), pk(sk), chall) = true,
 
     /* Play Integrity verification */
-    pi_verify(play_integrity_token(dev, n), google_attest_pk, n) = true,
-
-    /* PABC MPC verification (uses combined pk from both shares) */
-    mpc_verify(
-        mpc_combine(share_tee(sk), share_sim(sk),
-                    pabc_construct(luk, n, ctr, amt, mid, dbp)),
-        pk(sk),
-        pabc_construct(luk, n, ctr, amt, mid, dbp)
-    ) = true
+    pi_verify(play_integrity_token(dev, n), google_attest_pk, n) = true
 
 
 /* =========================================================================
@@ -259,25 +228,17 @@ rule Switch_Verify_Integrity:
  * Enhancement 1 (Chain of Trust): Instead of issuing LUK batches, the
  * Switch provisions a single TEE-sealed Master Seed. The client derives
  * LUKs locally on demand via prf(master_seed, hw_counter).
- *
- * Enhancement 2 (MPC Threshold Signing): The client's signing key sk is
- * split: share_tee(sk) goes to TEE; share_sim(sk) goes to SIM SE.
  * ========================================================================= */
 
-/* --- Rule 1.1: MPC Key Generation (TEE-share + SIM-share) --------------- */
-rule Client_MPC_KeyGen:
-    /* sk is the conceptual combined key; it never exists as a whole
-       on any single component — only as two independent shares.     */
+/* --- Rule 1.1: TEE Key Generation --------------------------------------- */
+rule Client_TEE_KeyGen:
+    /* The signing key sk is generated and stored securely in TEE.     */
     [ Fr(~sk)
     , Fr(~device_id)
-    , !DeviceAttested(~device_id) ]   /* Integrity gate (Enhancement 4)    */
-  --[ MPC_KeyGenerated(~device_id, pk(~sk))
-    , TEE_ShareStored(~device_id, share_tee(~sk))
-    , SIM_ShareStored(~device_id, share_sim(~sk)) ]-->
-    [ !TEE_Share(~device_id, share_tee(~sk))   /* TEE enclave, never to Out */
-    , !SIM_Share(~device_id, share_sim(~sk))   /* SIM SE, never to Out      */
-    , !CombinedPK(~device_id, pk(~sk))
-    , Out(pk(~sk)) ]                           /* Public key registered     */
+    , !DeviceAttested(~device_id) ]   /* Integrity gate (Enhancement 3)    */
+  --[ TEE_KeyGenerated(~device_id, pk(~sk)) ]-->
+    [ !TEE_PrivKey(~device_id, ~sk)   /* TEE enclave, never to Out */
+    , Out(pk(~sk)) ]                  /* Public key registered     */
 
 /* --- Rule 1.2: Merchant Key Generation ---------------------------------- */
 rule Merchant_KeyGen:
@@ -320,7 +281,7 @@ rule Switch_Provision_Seed:
 /* --- Rule 1.6: Client Receives and Seals Master Seed in TEE ------------- */
 rule Client_Seal_Seed:
     [ In(seed_enc)
-    , !TEE_Share(device_id, _)      /* Device has valid TEE share           */
+    , !TEE_PrivKey(device_id, _)      /* Device has valid TEE key             */
     , Fr(~device_ref) ]
   --[ ClientSealedSeed(device_id) ]-->
     /* Unseal using sk is implicit: seed = seed_decrypt(seed_enc, sk).
@@ -332,15 +293,14 @@ rule Client_Seal_Seed:
  * PHASE 2 — OFFLINE NFC EXCHANGE
  * =========================================================================
  * Enhancement 1: LUK derived from seed + hardware counter (not pre-fetched).
- * Enhancement 2: PABC signed via mpc_combine (TEE-share + SIM-share).
- * Enhancement 3: Distance bounding proof included in APDU.
- * Enhancement 5: Armed session bound to hardware monotonic counter.
+ * Enhancement 2: Distance bounding proof included in APDU.
+ * Enhancement 4: Armed session bound to hardware monotonic counter.
  * ========================================================================= */
 
 /* --- Rule 2.1: Biometric Authentication & Hardware-Timed Session Arming - */
-/*   Enhancement 5: session window tied to hw_monotonic_ctr, not OS clock  */
+/*   Enhancement 4: session window tied to hw_monotonic_ctr, not OS clock  */
 rule Client_Biometric_Auth:
-    [ !TEE_Share(device_id, _)
+    [ !TEE_PrivKey(device_id, _)
     , !HW_Counter(device_id, hw_ctr)
     , Fr(~session_id)
     , Fr(~bio_challenge) ]
@@ -349,7 +309,7 @@ rule Client_Biometric_Auth:
     , HWTimedSession(~session_id, hw_ctr) ]-->
     [ ArmedSession(device_id, ~session_id, hw_ctr) ]
 
-/* --- Rule 2.2: Distance-Bounding Challenge-Response (Enhancement 3) ----- */
+/* --- Rule 2.2: Distance-Bounding Challenge-Response (Enhancement 2) ----- */
 /*   Merchant issues a fresh NFC timing challenge.
      Client responds within the same NFC round (same physical proximity).  */
 rule Merchant_DB_Challenge:
@@ -362,37 +322,35 @@ rule Merchant_DB_Challenge:
 
 rule Client_DB_Response:
     [ In(chall)
-    , !TEE_Share(device_id, sk_tee_share)
+    , !TEE_PrivKey(device_id, sk_tee)
     , ArmedSession(device_id, session_id, hw_ctr)
     , Fr(~round_id) ]
   --[ DB_Response(chall, ~round_id)
     , ClientProvedProximity(device_id, chall) ]-->
     [ ClientProximate(device_id, session_id, hw_ctr, chall,
-                      db_response(chall, sk_tee_share))
+                      db_response(chall, sk_tee))
     , ArmedSession(device_id, session_id, hw_ctr) ]   /* session survives  */
 
-/* --- Rule 2.3: Dynamic LUK Derivation & PABC Generation (Enhancements 1+2+3+5) */
+/* --- Rule 2.3: Dynamic LUK Derivation & PABC Generation (Enhancements 1+2+4) */
 rule Client_Send_APDU:
     let
         /* Enhancement 1: derive LUK on-demand from seed + hw counter     */
         luk      = derive_luk(master_seed_val, hw_ctr)
 
-        /* Enhancement 3: distance-bounding proof embedded in PABC        */
-        db_proof = db_response(chall, sk_tee_share)
+        /* Enhancement 2: distance-bounding proof embedded in PABC        */
+        db_proof = db_response(chall, sk_tee)
 
-        /* Enhancement 2+5: PABC constructed with hw_ctr instead of ts    */
+        /* Enhancement 4: PABC constructed with hw_ctr instead of ts      */
         pabc_data = pabc_construct(luk, ~n, hw_ctr, amount, merchant_id, db_proof)
 
-        /* Enhancement 2: MPC threshold signature (both shares required)  */
-        pabc_sig = mpc_combine(sk_tee_share, sk_sim_share, pabc_data)
+        /* Standard signature using TEE private key                       */
+        pabc_sig = sign(sk_tee, pabc_data)
 
         apdu = apdu_build(luk, amount, ~atc, pabc_sig, db_proof)
     in
     [ ClientProximate(device_id, session_id, hw_ctr, chall, db_proof)
     , !TEE_MasterSeed(device_id, seed_enc)
-    , !TEE_Share(device_id, sk_tee_share)
-    , !SIM_Share(device_id, sk_sim_share)
-    , !CombinedPK(device_id, pk_combined_val)
+    , !TEE_PrivKey(device_id, sk_tee)
     , Fr(~n)
     , Fr(~atc)
     , In(amount)
@@ -400,9 +358,8 @@ rule Client_Send_APDU:
   --[ ClientSentAPDU(device_id, session_id, luk, ~n, amount, merchant_id)
     , PABCGenerated(device_id, luk, ~n, hw_ctr, amount, merchant_id)
     , SessionExpired(session_id)
-    , ConsumedCounter(device_id, hw_ctr)     /* Enhancement 5: counter used */
-    , Secret(sk_tee_share)
-    , Secret(sk_sim_share) ]
+    , ConsumedCounter(device_id, hw_ctr)     /* Enhancement 4: counter used */
+    , Secret(sk_tee) ]
     -->
     /* The used counter slot is retired; next derivation uses ctr+1 */
     [ !UsedCounter(device_id, hw_ctr)
@@ -410,9 +367,7 @@ rule Client_Send_APDU:
 
     /* NOTE: master_seed_val is bound by:
          seed_enc = seed_encrypt(master_seed_val, pk(sk))
-       and sk_tee_share, sk_sim_share satisfy:
-         mpc_combine(share_tee(sk), share_sim(sk), m) = sign(sk, m)
-       Tamarin resolves these via the equations block.                    */
+       Tamarin resolves this via the equations block.                      */
 
 /* --- Rule 2.4: Merchant Receives APDU (Zero-Knowledge relay) ------------ */
 rule Merchant_Receive_APDU:
@@ -459,7 +414,7 @@ rule Switch_Verify_And_Settle:
   --[ /* ① Merchant signature valid */
       Eq(verify(merch_sig, h(apdu_in), pk_merch), true),
 
-      /* ② MPC signature on PABC valid (combined pk) */
+      /* ② PABC signature valid */
       SwitchVerifiedSignature(client_id, luk, pabc_sig, pk_cl),
 
       /* ③ Distance-bounding proof present */
@@ -487,10 +442,10 @@ rule Switch_Init:
 /* =========================================================================
  * ADVERSARY MODEL — ADDITIONAL RULES
  * =========================================================================
- * Standard Dolev-Yao. MPC security: adversary knows pk(sk) but cannot
- * obtain share_tee(sk) or share_sim(sk) — no rule outputs these to Out().
+ * Standard Dolev-Yao. The TEE private key never reaches Out(), ensuring
+ * the adversary cannot forge signatures.
  *
- * Enhancement 4: Adversary may attempt to forge play_integrity_token, but
+ * Enhancement 3: Adversary may attempt to forge play_integrity_token, but
  * pi_verify requires google_attest_pk which is a public constant; forging
  * requires the corresponding private key, which is never in the model.
  * ========================================================================= */
@@ -554,23 +509,7 @@ lemma Seed_Secrecy:
         not (Ex #ta. KU(ms) @ #ta)"
 
 /*
- * L5 — MPC SPLIT SECURITY (Enhancement 2)
- * Compromise of the TEE share alone (full Android root) cannot produce
- * a valid MPC signature. The adversary would need share_sim(sk) too.
- *
- * Formally: KU(share_tee(sk)) does NOT imply KU(sign(sk, _)).
- * We prove the contrapositive: if the adversary can produce a valid
- * MPC signature, then she knows BOTH shares — which requires compromising
- * two independent secure elements simultaneously.
- */
-lemma MPC_Split_Security:
-    "All dev sk_tee_share #t1.
-        TEE_ShareStored(dev, sk_tee_share) @ #t1
-        ==>
-        not (Ex #ta. KU(sk_tee_share) @ #ta)"
-
-/*
- * L6 — DISTANCE BOUNDING (Enhancement 3)
+ * L5 — DISTANCE BOUNDING (Enhancement 2)
  * Every settled transaction is backed by a distance-bounding proof
  * generated in the same NFC round as the merchant's challenge.
  * This proves relay attacks (which add network latency) are blocked.
@@ -584,7 +523,7 @@ lemma Distance_Bounding:
             & #tdb < #ts"
 
 /*
- * L7 — DEVICE INTEGRITY GATE (Enhancement 4)
+ * L6 — DEVICE INTEGRITY GATE (Enhancement 3)
  * No Master Seed is ever provisioned to a device that has not passed
  * the Play Integrity verification.
  */
@@ -595,7 +534,7 @@ lemma Device_Integrity:
         Ex #ti. IntegrityVerified(dev) @ #ti & #ti < #tp"
 
 /*
- * L8 — HARDWARE COUNTER MONOTONICITY (Enhancement 5)
+ * L7 — HARDWARE COUNTER MONOTONICITY (Enhancement 4)
  * The hardware counter for a given device strictly increases.
  * A counter value used for a LUK derivation is never reused.
  */
@@ -606,21 +545,19 @@ lemma Counter_Monotonicity:
         ==> #t1 = #t2"
 
 /*
- * L9 — MERCHANT ZERO-KNOWLEDGE
- * The SoftPOS merchant never learns the client's TEE or SIM share.
+ * L8 — MERCHANT ZERO-KNOWLEDGE
+ * The SoftPOS merchant never learns the client's TEE private key.
  */
 lemma Merchant_ZeroKnowledge:
     "All mid dev apdu #tm.
         MerchantReceivedAPDU(mid, apdu) @ #tm
         ==>
-        (not (Ex sk_s #ta. SIM_ShareStored(dev, sk_s) @ #t1 & KU(sk_s) @ #ta))
-        &
-        (not (Ex sk_t #ta. TEE_ShareStored(dev, sk_t) @ #t2 & KU(sk_t) @ #ta))"
+        (not (Ex sk_t #t1 #ta. TEE_KeyGenerated(dev, pk(sk_t)) @ #t1 & KU(sk_t) @ #ta))"
 
 /*
- * L10 — SWITCH NON-FRAMEABILITY
+ * L9 — SWITCH NON-FRAMEABILITY
  * The Switch only emits SwitchSettled when it has also verified
- * the MPC signature and distance-bounding proof in the same rule instance.
+ * the signature and distance-bounding proof in the same rule instance.
  */
 lemma Switch_NonFrameability:
     "All mid tx_id #ts.
@@ -633,7 +570,7 @@ lemma Switch_NonFrameability:
             & #tdb = #ts"
 
 /*
- * L11 — EXECUTABILITY (Sanity Check)
+ * L10 — EXECUTABILITY (Sanity Check)
  * The model is not vacuously true: at least one complete execution
  * trace exists in which a transaction is settled.
  * Run this first — if it fails, the model has a structural error.
