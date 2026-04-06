@@ -359,8 +359,7 @@ rule Client_Send_APDU:
     , PABCGenerated(device_id, luk, ~n, hw_ctr, amount, merchant_id)
     , SessionExpired(session_id)
     , ConsumedCounter(device_id, hw_ctr)     /* Enhancement 4: counter used */
-    , Secret(sk_tee) ]
-    -->
+    , Secret(sk_tee) ]->
     /* The used counter slot is retired; next derivation uses ctr+1 */
     [ !UsedCounter(device_id, hw_ctr)
     , Out(apdu) ]
