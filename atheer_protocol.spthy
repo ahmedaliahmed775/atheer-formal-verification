@@ -188,8 +188,8 @@ restriction Integrity_Before_Provisioning:
 
 /* Merchant must be registered before settling                             */
 restriction Merchant_Must_Be_Registered:
-    "All mid #ts.
-        SwitchSettled(mid, _) @ #ts
+    "All mid tx_id #ts.
+        SwitchSettled(mid, tx_id) @ #ts
         ==> Ex #tr. MerchantRegistered(mid) @ #tr & #tr < #ts"
 
 
@@ -205,7 +205,7 @@ restriction Merchant_Must_Be_Registered:
 rule Client_Attest_Device:
     [ Fr(~pi_nonce)
     , Fr(~device_id) ]
-  --[ DeviceAttesting(~device_id) ]-->
+  --[ DeviceAttesting(~device_id) ]--> 
     [ ClientAttesting(~device_id,
                       play_integrity_token(~device_id, ~pi_nonce),
                       ~pi_nonce)
@@ -218,7 +218,7 @@ rule Switch_Verify_Integrity:
                    google_attest_pk,
                    pi_nonce),
          true)
-    , IntegrityVerified(device_id) ]-->
+    , IntegrityVerified(device_id) ]--> 
     [ !DeviceAttested(device_id) ]
 
 
@@ -236,7 +236,7 @@ rule Client_TEE_KeyGen:
     [ Fr(~sk)
     , Fr(~device_id)
     , !DeviceAttested(~device_id) ]   /* Integrity gate (Enhancement 3)    */
-  --[ TEE_KeyGenerated(~device_id, pk(~sk)) ]-->
+  --[ TEE_KeyGenerated(~device_id, pk(~sk)) ]--> 
     [ !TEE_PrivKey(~device_id, ~sk)   /* TEE enclave, never to Out */
     , Out(pk(~sk)) ]                  /* Public key registered     */
 
@@ -288,7 +288,6 @@ rule Client_Seal_Seed:
        We model the resulting sealed seed in TEE storage.                   */
     [ !TEE_MasterSeed(device_id, seed_enc) ]
 
-
 /* =========================================================================
  * PHASE 2 — OFFLINE NFC EXCHANGE
  * =========================================================================
@@ -306,7 +305,7 @@ rule Client_Biometric_Auth:
     , Fr(~bio_challenge) ]
   --[ BiometricVerified(device_id, ~session_id)
     , SessionArmed(~session_id)
-    , HWTimedSession(~session_id, hw_ctr) ]-->
+    , HWTimedSession(~session_id, hw_ctr) ]--> 
     [ ArmedSession(device_id, ~session_id, hw_ctr) ]
 
 /* --- Rule 2.2: Distance-Bounding Challenge-Response (Enhancement 2) ----- */
@@ -326,7 +325,7 @@ rule Client_DB_Response:
     , ArmedSession(device_id, session_id, hw_ctr)
     , Fr(~round_id) ]
   --[ DB_Response(chall, ~round_id)
-    , ClientProvedProximity(device_id, chall) ]-->
+    , ClientProvedProximity(device_id, chall) ]--> 
     [ ClientProximate(device_id, session_id, hw_ctr, chall,
                       db_response(chall, sk_tee))
     , ArmedSession(device_id, session_id, hw_ctr) ]   /* session survives  */
@@ -377,12 +376,11 @@ rule Merchant_Receive_APDU:
     , Fr(~hw_ctr_merch) ]
   --[ MerchantReceivedAPDU(merchant_id, apdu)
     , MerchantForwarding(merchant_id, ~tx_nonce)
-    , DB_VerifiedProximity(merchant_id, chall) ]-->
+    , DB_VerifiedProximity(merchant_id, chall) ]--> 
     [ MerchantHoldsChargeRequest(
           merchant_id,
           charge_request(apdu, merchant_id, ~hw_ctr_merch, ~tx_nonce,
                          sign(h(apdu), sk_merch))) ]
-
 
 /* =========================================================================
  * PHASE 3 — APN-ROUTED SETTLEMENT
@@ -437,7 +435,6 @@ rule Switch_Init:
   --[ SwitchInitialized(~db_id) ]--> 
     [ !SwitchDB(~db_id) ]
 
-
 /* =========================================================================
  * ADVERSARY MODEL — ADDITIONAL RULES
  * =========================================================================
@@ -450,8 +447,7 @@ rule Switch_Init:
  * ========================================================================= */
 
 rule Adv_Observe:
-    [ Out(x) ]-> [ KnowsPublic(x) ]
-
+    [ Out(x) ] --> [ KnowsPublic(x) ]
 
 /* =========================================================================
  * SECURITY LEMMAS
