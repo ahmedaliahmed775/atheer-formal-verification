@@ -111,8 +111,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        lemma: [Authentication, Anti_Replay, Session_Integrity, Seed_Secrecy, Distance_Bounding, Device_Integrity, Counter_Monotonicity, Switch_NonFrameability, Merchant_ZK]
-    steps:
+lemma: [Authentication, Anti_Replay, Session_Integrity, Seed_Secrecy, Distance_Bounding, Device_Integrity, Counter_Monotonicity, Switch_NonFrameability, Merchant_ZeroKnowledge]    steps:
       - uses: actions/checkout@v4
       - name: تثبيت الأدوات
         run: |
