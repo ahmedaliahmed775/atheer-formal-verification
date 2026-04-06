@@ -11,34 +11,6 @@
  * Model:      Dolev-Yao Adversary — Full Symbolic Attacker
  *
  * ============================================================================
- * ENHANCEMENTS OVER v1.0
- * ============================================================================
- *
- * 1. CHAIN OF TRUST — Dynamic LUK Derivation (replaces batch provisioning)
- * One TEE-sealed Master Seed (ms) stored permanently. Each LUK is derived
- * on-demand:  LUK_i = PRF(ms, counter_i)
- * A monotonic hardware counter (TEE_counter) tracks derivations so the
- * adversary cannot rewind the counter to re-derive a spent token.
- *
- * 2. DISTANCE BOUNDING (NFC round-trip timing)
- * The merchant issues a fresh timing challenge (db_chall). The client
- * returns a signed response within a tight timing window (modeled as
- * a restriction: response must occur in the same "round" as challenge).
- * This defeats relay attacks that introduce measurable network latency.
- *
- * 3. DEVICE INTEGRITY via Play Integrity API
- * Before any provisioning, the Switch verifies a Play Integrity Token
- * (pi_token) signed by Google's attestation root. Only devices passing
- * this check receive Master Seeds. Emulators and rooted devices are
- * excluded at the attestation layer.
- *
- * 4. ATOMIC HARDWARE TIMING (Monotonic Counter for Armed Session)
- * The 60-second Armed Session is bound to a hardware monotonic counter
- * value (hw_ctr_start) rather than the Android system clock. The session
- * is valid only if the current counter value is within [start, start+W].
- * Adversarial clock manipulation cannot extend the signing window.
- *
- * ============================================================================
  * SECURITY PROPERTIES (10 LEMMAS)
  * ============================================================================
  * L1.  Authentication             — Settlement implies genuine client APDU
@@ -104,10 +76,6 @@ functions:
     /* ---- PABC (Pre-Authorized Biometric Cryptogram) --------------------- */
     pabc_construct/6,        /* pabc(luk, nonce, hw_ctr, amount, mid, db_prf)  */
 
-    /* ---- APDU & ChargeRequest ------------------------------------------- */
-    apdu_build/7,            /* apdu(luk, amount, atc, hw_ctr, nonce, pabc_sig, db_proof) */
-    charge_request/5,        /* charge_request(apdu, mid, hw_ctr, nonce, sig) */
-
     /* ---- AES-256-GCM ----------------------------------------------------- */
     aes_enc/3,
     aes_dec/3,
@@ -148,13 +116,6 @@ restriction LUK_Single_Use:
     "All luk #t1 #t2.
         ConsumedLUK(luk) @ #t1 & ConsumedLUK(luk) @ #t2
         ==> #t1 = #t2"
-
-/* Hardware counter strictly increases — never repeats                      */
-restriction Counter_Strictly_Increasing:
-    "All dev c1 c2 #t1 #t2.
-        HWCounter(dev, c1) @ #t1 & HWCounter(dev, c2) @ #t2
-        & #t1 < #t2
-        ==> c1 < c2"   /* Tamarin multiset ordering models nat ordering     */
 
 /* Nonce accepted by Switch at most once                                    */
 restriction Nonce_Uniqueness:
@@ -201,17 +162,12 @@ rule Client_Attest_Device:
     [ Fr(~pi_nonce)
     , Fr(~device_id) ]
   --[ DeviceAttesting(~device_id) ]-> 
-    [ ClientAttesting(~device_id,
-                      play_integrity_token(~device_id, ~pi_nonce),
-                      ~pi_nonce)
-    , Out(play_integrity_token(~device_id, ~pi_nonce)) ]
+    [ ClientAttesting(~device_id, play_integrity_token(~device_id, ~pi_nonce), ~pi_nonce)
+    , Out( <~device_id, ~pi_nonce, play_integrity_token(~device_id, ~pi_nonce)> ) ]
 
 rule Switch_Verify_Integrity:
-    [ In(play_integrity_token(device_id, pi_nonce)) ]
-  --[ Eq(pi_verify(play_integrity_token(device_id, pi_nonce),
-                   google_attest_pk,
-                   pi_nonce),
-         true)
+    [ In( <device_id, pi_nonce, pi_token> ) ]
+  --[ Eq(pi_verify(pi_token, google_attest_pk, pi_nonce), true)
     , IntegrityVerified(device_id) ]-> 
     [ !DeviceAttested(device_id) ]
 
@@ -262,7 +218,7 @@ rule Switch_Provision_Seed:
 
 rule Client_Seal_Seed:
     [ In(seed_enc)
-    , !TEE_PrivKey(device_id, dummy_sk)
+    , !TEE_PrivKey(device_id, sk_tee)
     , Fr(~device_ref) ]
   --[ ClientSealedSeed(device_id) ]-> 
     [ !TEE_MasterSeed(device_id, seed_enc) ]
@@ -273,7 +229,7 @@ rule Client_Seal_Seed:
  * ========================================================================= */
 
 rule Client_Biometric_Auth:
-    [ !TEE_PrivKey(device_id, dummy_sk)
+    [ !TEE_PrivKey(device_id, sk_tee)
     , !HW_Counter(device_id, hw_ctr)
     , Fr(~session_id)
     , Fr(~bio_challenge) ]
@@ -285,7 +241,7 @@ rule Client_Biometric_Auth:
 rule Merchant_DB_Challenge:
     [ Fr(~chall)
     , Fr(~round_id)
-    , !Merchant_PrivKey(merchant_id, dummy_sk) ]
+    , !Merchant_PrivKey(merchant_id, sk_merch) ]
   --[ DB_Challenge(~chall, ~round_id) ]-> 
     [ MerchantWaiting_DB(merchant_id, ~chall, ~round_id)
     , Out(~chall) ]
@@ -297,8 +253,7 @@ rule Client_DB_Response:
     , Fr(~round_id) ]
   --[ DB_Response(chall, ~round_id)
     , ClientProvedProximity(device_id, chall) ]-> 
-    [ ClientProximate(device_id, session_id, hw_ctr, chall,
-                      db_response(chall, sk_tee))
+    [ ClientProximate(device_id, session_id, hw_ctr, chall, db_response(chall, sk_tee))
     , ArmedSession(device_id, session_id, hw_ctr) ]
 
 rule Client_Send_APDU:
@@ -308,7 +263,8 @@ rule Client_Send_APDU:
         db_proof = db_response(chall, sk_tee)
         pabc_data = pabc_construct(luk, ~n, hw_ctr, amount, merchant_id, db_proof)
         pabc_sig = sign(sk_tee, pabc_data)
-        apdu = apdu_build(luk, amount, ~atc, hw_ctr, ~n, pabc_sig, db_proof)
+        /* Standard Tuple instead of unparseable function */
+        apdu = <luk, amount, ~atc, hw_ctr, ~n, pabc_sig, db_proof>
     in
     [ ClientProximate(device_id, session_id, hw_ctr, chall, db_proof)
     , !TEE_MasterSeed(device_id, seed_enc)
@@ -318,7 +274,7 @@ rule Client_Send_APDU:
     , In(amount)
     , In(merchant_id) ]
   --[ ClientSentAPDU(device_id, session_id, luk, ~n, amount, merchant_id)
-    , PABCGenerated(device_id, luk, ~n, hw_ctr, amount, merchant_id)
+    , PABCGenerated(device_id, session_id, luk, ~n, hw_ctr, amount, merchant_id)
     , SessionExpired(session_id)
     , ConsumedCounter(device_id, hw_ctr)
     , Secret(sk_tee) ]->
@@ -326,18 +282,18 @@ rule Client_Send_APDU:
     , Out(apdu) ]
 
 rule Merchant_Receive_APDU:
-    [ In(apdu)
+    [ In( <luk, amount, atc, hw_ctr_pabc, nonce_pabc, pabc_sig, db_prf> )
     , MerchantWaiting_DB(merchant_id, chall, round_id)
     , !Merchant_PrivKey(merchant_id, sk_merch)
     , Fr(~tx_nonce)
     , Fr(~hw_ctr_merch) ]
-  --[ MerchantReceivedAPDU(merchant_id, apdu)
+  --[ MerchantReceivedAPDU(merchant_id, <luk, amount, atc, hw_ctr_pabc, nonce_pabc, pabc_sig, db_prf>)
     , MerchantForwarding(merchant_id, ~tx_nonce)
     , DB_VerifiedProximity(merchant_id, chall) ]-> 
     [ MerchantHoldsChargeRequest(
           merchant_id,
-          charge_request(apdu, merchant_id, ~hw_ctr_merch, ~tx_nonce,
-                         sign(h(apdu), sk_merch))) ]
+          < <luk, amount, atc, hw_ctr_pabc, nonce_pabc, pabc_sig, db_prf>, merchant_id, ~hw_ctr_merch, ~tx_nonce, sign(h(<luk, amount, atc, hw_ctr_pabc, nonce_pabc, pabc_sig, db_prf>), sk_merch) >
+      ) ]
 
 
 /* =========================================================================
@@ -352,12 +308,10 @@ rule Merchant_Send_ChargeRequest:
 
 rule Switch_Verify_And_Settle:
     let
-        /* Extract contents using precise Pattern Matching */
-        apdu_in   = apdu_build(luk, amount, atc, hw_ctr_pabc, nonce_pabc, pabc_sig, db_prf)
+        apdu_in   = <luk, amount, atc, hw_ctr_pabc, nonce_pabc, pabc_sig, db_prf>
         pabc_data = pabc_construct(luk, nonce_pabc, hw_ctr_pabc, amount, mid, db_prf)
-        cr        = charge_request(apdu_in, mid, hw_ctr_cr, nonce_cr, merch_sig)
     in
-    [ In(cr)
+    [ In( < apdu_in, mid, hw_ctr_cr, nonce_cr, merch_sig > )
     , !Switch_Registry(client_id, pk_cl)
     , !Seed_Registry(seed_id, client_id, master_seed)
     , !Merchant_PubKey(mid, pk_merch)
@@ -365,7 +319,7 @@ rule Switch_Verify_And_Settle:
   --[ /* ① Merchant signature valid */
       Eq(verify(merch_sig, h(apdu_in), pk_merch), true),
 
-      /* ② PABC signature valid (crucial fix) */
+      /* ② PABC signature valid */
       Eq(verify(pabc_sig, pabc_data, pk_cl), true),
 
       /* ③ Ensure LUK matches derived seed */
@@ -380,12 +334,6 @@ rule Switch_Verify_And_Settle:
     ]-> 
     [ Out(settle_ack(~tx_id, 'SUCCESS')) ]
 
-/* =========================================================================
- * ADVERSARY MODEL
- * ========================================================================= */
-
-rule Adv_Observe:
-    [ Out(x) ] --> [ KnowsPublic(x) ]
 
 /* =========================================================================
  * SECURITY LEMMAS
@@ -406,7 +354,7 @@ lemma Anti_Replay:
 
 lemma Session_Integrity:
     "All dev sid luk n hw_ctr amount mid #tp.
-        PABCGenerated(dev, luk, n, hw_ctr, amount, mid) @ #tp
+        PABCGenerated(dev, sid, luk, n, hw_ctr, amount, mid) @ #tp
         ==>
         Ex #ta #te.
             SessionArmed(sid) @ #ta
@@ -441,10 +389,10 @@ lemma Counter_Monotonicity:
         ==> #t1 = #t2"
 
 lemma Merchant_ZeroKnowledge:
-    "All mid dev apdu #tm.
+    "All mid apdu #tm.
         MerchantReceivedAPDU(mid, apdu) @ #tm
         ==>
-        (not (Ex sk_t #t1 #ta. TEE_KeyGenerated(dev, pk(sk_t)) @ #t1 & KU(sk_t) @ #ta))"
+        not(Ex dev sk_t #t1 #ta. TEE_KeyGenerated(dev, pk(sk_t)) @ #t1 & !KU(sk_t) @ #ta)"
 
 lemma Switch_NonFrameability:
     "All mid tx_id #ts.
