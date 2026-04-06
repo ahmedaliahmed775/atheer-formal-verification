@@ -34,6 +34,14 @@ concurrency:
   group: tamarin-verify-${{ github.ref }}
   cancel-in-progress: true
 
+# ============================================================
+# ACTION REUSABLE — تثبيت Tamarin + Maude معاً
+# يُعرَّف هنا كـ step مشترك عبر env لتجنب التكرار
+# ============================================================
+env:
+  TAMARIN_VERSION: "1.8.0"
+  MAUDE_VERSION: "3.4"
+
 jobs:
   # ===========================================================
   # JOB 1: التحقق من صحة بناء الجملة (syntax check سريع)
@@ -41,34 +49,102 @@ jobs:
   syntax-check:
     name: '🔍 فحص بناء الجملة'
     runs-on: ubuntu-22.04
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - name: استنساخ المستودع
         uses: actions/checkout@v4
 
+      # ----------------------------------------------------------
+      # الإصلاح الجذري: تثبيت Maude أولاً، ثم Tamarin
+      # Tamarin يعتمد على Maude كعملية خارجية مستقلة في PATH
+      # ----------------------------------------------------------
+      - name: تثبيت Maude (اعتمادية Tamarin الأساسية)
+        run: |
+          echo "=== تثبيت Maude ${MAUDE_VERSION} ==="
+          sudo apt-get update -qq
+          sudo apt-get install -y graphviz libgmp10 2>/dev/null
+
+          # تثبيت Maude من الموقع الرسمي
+          curl -sSL "https://github.com/SRI-CSL/Maude/releases/download/Maude${MAUDE_VERSION}/maude-linux.zip" \
+            -o maude.zip 2>/dev/null || \
+          curl -sSL "https://maude.cs.illinois.edu/maude${MAUDE_VERSION/./}/binaries/Maude${MAUDE_VERSION}-linux.zip" \
+            -o maude.zip 2>/dev/null || true
+
+          if [ -f maude.zip ]; then
+            unzip -q maude.zip -d maude_bin || true
+            MAUDE_BIN=$(find maude_bin -name "maude*" -type f -executable 2>/dev/null | head -1)
+            if [ -n "$MAUDE_BIN" ]; then
+              sudo cp "$MAUDE_BIN" /usr/local/bin/maude
+              sudo chmod +x /usr/local/bin/maude
+              echo "✅ Maude مُثبَّت من الأرشيف"
+            fi
+            rm -rf maude.zip maude_bin
+          fi
+
+          # محاولة بديلة: apt
+          if ! command -v maude &>/dev/null; then
+            sudo apt-get install -y maude 2>/dev/null && echo "✅ Maude مُثبَّت من apt" || true
+          fi
+
+          # التحقق
+          if command -v maude &>/dev/null; then
+            maude --version 2>&1 | head -2 || true
+            echo "✅ Maude جاهز على المسار: $(which maude)"
+          else
+            echo "⚠️ Maude غير متاح — سيفشل Tamarin. جاري المتابعة للتشخيص."
+          fi
+
       - name: تثبيت Tamarin Prover
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y tamarin-prover graphviz 2>/dev/null || true
-          
-          # إذا لم يكن متاحاً في apt، نثبته من المصدر
-          if ! command -v tamarin-prover &>/dev/null; then
-            echo "تثبيت Tamarin من الإصدار الثنائي..."
-            curl -sSL https://github.com/tamarin-prover/tamarin-prover/releases/download/1.8.0/tamarin-prover-1.8.0-linux64-ubuntu.tar.gz \
-              -o tamarin.tar.gz
-            tar -xzf tamarin.tar.gz
-            sudo mv tamarin-prover /usr/local/bin/
-            rm tamarin.tar.gz
+          echo "=== تثبيت Tamarin Prover ${TAMARIN_VERSION} ==="
+
+          # المحاولة الأولى: apt (قد لا يكون متاحاً في ubuntu-22.04)
+          if apt-cache show tamarin-prover &>/dev/null 2>&1; then
+            sudo apt-get install -y tamarin-prover && echo "✅ Tamarin من apt" && exit 0
           fi
-          
-          tamarin-prover --version
+
+          # المحاولة الثانية: الثنائي الرسمي من GitHub Releases
+          # الرابط الصحيح: tamarin-prover-X.Y.Z-linux64-ubuntu.tar.gz
+          BINARY_URL="https://github.com/tamarin-prover/tamarin-prover/releases/download/${TAMARIN_VERSION}/tamarin-prover-${TAMARIN_VERSION}-linux64-ubuntu.tar.gz"
+          echo "جاري تنزيل: $BINARY_URL"
+
+          curl -sSL "$BINARY_URL" -o tamarin.tar.gz
+
+          # الأرشيف يحتوي مباشرة على الثنائي بدون مجلد فرعي في بعض الإصدارات
+          tar -xzf tamarin.tar.gz
+          TAMARIN_BIN=$(find . -maxdepth 3 -name "tamarin-prover" -type f 2>/dev/null | head -1)
+
+          if [ -n "$TAMARIN_BIN" ]; then
+            sudo mv "$TAMARIN_BIN" /usr/local/bin/tamarin-prover
+            sudo chmod +x /usr/local/bin/tamarin-prover
+            echo "✅ Tamarin مُثبَّت من الإصدار الثنائي"
+          fi
+          rm -f tamarin.tar.gz
+
+          # التحقق النهائي (بدون --version لأنه يتطلب Maude)
+          if command -v tamarin-prover &>/dev/null; then
+            echo "✅ tamarin-prover موجود على: $(which tamarin-prover)"
+          else
+            echo "❌ فشل تثبيت Tamarin"
+            exit 1
+          fi
+
+      - name: التحقق من البيئة الكاملة
+        run: |
+          echo "=== فحص البيئة ==="
+          echo "Maude: $(maude --version 2>&1 | head -1 || echo 'غير مثبَّت')"
+          echo "Tamarin binary: $(which tamarin-prover)"
+          echo "النظام: $(uname -a)"
+          echo "المعالجات: $(nproc)"
 
       - name: فحص بناء الجملة بدون إثبات
         run: |
           echo "=== فحص ملف البروتوكول ==="
-          tamarin-prover atheer_protocol.spthy
-          echo "✅ بناء الجملة صحيح"
+          # --parse-only: يتحقق من بناء الجملة فقط بدون تشغيل Maude
+          tamarin-prover --parse-only atheer_protocol.spthy && \
+            echo "✅ بناء الجملة صحيح" || \
+            (echo "❌ خطأ في بناء الجملة" && exit 1)
 
       - name: عرض ملخص النموذج
         run: |
@@ -79,6 +155,17 @@ jobs:
           echo "عدد البراهين: $(grep -c '^lemma ' atheer_protocol.spthy)"
           echo "عدد القيود: $(grep -c '^restriction ' atheer_protocol.spthy)"
 
+          # إضافة ملخص في Job Summary
+          echo "## 🔍 ملخص فحص بناء الجملة" >> $GITHUB_STEP_SUMMARY
+          echo "| المقياس | القيمة |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| الملف | \`atheer_protocol.spthy\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| عدد الأسطر | $(wc -l < atheer_protocol.spthy) |" >> $GITHUB_STEP_SUMMARY
+          echo "| عدد القواعد | $(grep -c '^rule ' atheer_protocol.spthy) |" >> $GITHUB_STEP_SUMMARY
+          echo "| عدد البراهين | $(grep -c '^lemma ' atheer_protocol.spthy) |" >> $GITHUB_STEP_SUMMARY
+          echo "| عدد القيود | $(grep -c '^restriction ' atheer_protocol.spthy) |" >> $GITHUB_STEP_SUMMARY
+          echo "| حالة بناء الجملة | ✅ صحيح |" >> $GITHUB_STEP_SUMMARY
+
   # ===========================================================
   # JOB 2: إثبات برهان سلامة التنفيذ (Executability) — سريع
   # ===========================================================
@@ -86,34 +173,50 @@ jobs:
     name: '⚡ إثبات سريع — Executability'
     runs-on: ubuntu-22.04
     needs: syntax-check
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: تثبيت Tamarin Prover
+      - name: تثبيت Maude
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y tamarin-prover graphviz 2>/dev/null || true
-          if ! command -v tamarin-prover &>/dev/null; then
-            curl -sSL https://github.com/tamarin-prover/tamarin-prover/releases/download/1.8.0/tamarin-prover-1.8.0-linux64-ubuntu.tar.gz \
-              -o tamarin.tar.gz
-            tar -xzf tamarin.tar.gz
-            sudo mv tamarin-prover /usr/local/bin/
+          sudo apt-get install -y graphviz libgmp10 2>/dev/null
+          curl -sSL "https://github.com/SRI-CSL/Maude/releases/download/Maude${MAUDE_VERSION}/maude-linux.zip" \
+            -o maude.zip 2>/dev/null || true
+          if [ -f maude.zip ]; then
+            unzip -q maude.zip -d maude_bin || true
+            MAUDE_BIN=$(find maude_bin -name "maude*" -type f -executable 2>/dev/null | head -1)
+            [ -n "$MAUDE_BIN" ] && sudo cp "$MAUDE_BIN" /usr/local/bin/maude && sudo chmod +x /usr/local/bin/maude
+            rm -rf maude.zip maude_bin
           fi
+          command -v maude &>/dev/null || sudo apt-get install -y maude 2>/dev/null || true
+
+      - name: تثبيت Tamarin Prover
+        run: |
+          BINARY_URL="https://github.com/tamarin-prover/tamarin-prover/releases/download/${TAMARIN_VERSION}/tamarin-prover-${TAMARIN_VERSION}-linux64-ubuntu.tar.gz"
+          curl -sSL "$BINARY_URL" -o tamarin.tar.gz
+          tar -xzf tamarin.tar.gz
+          TAMARIN_BIN=$(find . -maxdepth 3 -name "tamarin-prover" -type f 2>/dev/null | head -1)
+          [ -n "$TAMARIN_BIN" ] && sudo mv "$TAMARIN_BIN" /usr/local/bin/tamarin-prover && sudo chmod +x /usr/local/bin/tamarin-prover
+          rm -f tamarin.tar.gz
 
       - name: إثبات Executability (فحص سلامة النموذج)
         run: |
           echo "=== إثبات Executability ==="
+          mkdir -p proofs
+
           tamarin-prover atheer_protocol.spthy \
             --prove=Executability \
-            +RTS -N2 -RTS \
-            2>&1 | tee proofs/executability_result.txt
-          
-          if grep -q "verified" proofs/executability_result.txt; then
+            +RTS -N$(nproc) -RTS \
+            2>&1 | tee proofs/Executability_result.txt
+
+          if grep -q "verified" proofs/Executability_result.txt; then
             echo "✅ Executability: مُثبَت — النموذج يحتوي على آثار تنفيذ صحيحة"
+            echo "## ⚡ Executability: ✅ مُثبَت" >> $GITHUB_STEP_SUMMARY
           else
             echo "❌ Executability: فشل — النموذج قد يحتوي على خطأ هيكلي"
+            echo "## ⚡ Executability: ❌ فشل" >> $GITHUB_STEP_SUMMARY
             exit 1
           fi
 
@@ -121,14 +224,14 @@ jobs:
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: executability-proof
+          name: proof-Executability
           path: proofs/
 
   # ===========================================================
-  # JOB 3: إثبات البراهين الأمنية الكاملة (11 برهان)
+  # JOB 3: إثبات البراهين الأمنية الكاملة (9 براهين — متوازٍ)
   # ===========================================================
   verify-security-lemmas:
-    name: '🔐 إثبات البراهين الأمنية الكاملة'
+    name: '🔐 إثبات — ${{ matrix.lemma }}'
     runs-on: ubuntu-22.04
     needs: verify-executability
     timeout-minutes: ${{ fromJSON(github.event.inputs.timeout || '60') }}
@@ -150,31 +253,45 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: تثبيت Tamarin Prover
+      - name: تثبيت Maude
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y tamarin-prover graphviz 2>/dev/null || true
-          if ! command -v tamarin-prover &>/dev/null; then
-            curl -sSL https://github.com/tamarin-prover/tamarin-prover/releases/download/1.8.0/tamarin-prover-1.8.0-linux64-ubuntu.tar.gz \
-              -o tamarin.tar.gz
-            tar -xzf tamarin.tar.gz
-            sudo mv tamarin-prover /usr/local/bin/
+          sudo apt-get install -y graphviz libgmp10 2>/dev/null
+          curl -sSL "https://github.com/SRI-CSL/Maude/releases/download/Maude${MAUDE_VERSION}/maude-linux.zip" \
+            -o maude.zip 2>/dev/null || true
+          if [ -f maude.zip ]; then
+            unzip -q maude.zip -d maude_bin || true
+            MAUDE_BIN=$(find maude_bin -name "maude*" -type f -executable 2>/dev/null | head -1)
+            [ -n "$MAUDE_BIN" ] && sudo cp "$MAUDE_BIN" /usr/local/bin/maude && sudo chmod +x /usr/local/bin/maude
+            rm -rf maude.zip maude_bin
           fi
+          command -v maude &>/dev/null || sudo apt-get install -y maude 2>/dev/null || true
+
+      - name: تثبيت Tamarin Prover
+        run: |
+          BINARY_URL="https://github.com/tamarin-prover/tamarin-prover/releases/download/${TAMARIN_VERSION}/tamarin-prover-${TAMARIN_VERSION}-linux64-ubuntu.tar.gz"
+          curl -sSL "$BINARY_URL" -o tamarin.tar.gz
+          tar -xzf tamarin.tar.gz
+          TAMARIN_BIN=$(find . -maxdepth 3 -name "tamarin-prover" -type f 2>/dev/null | head -1)
+          [ -n "$TAMARIN_BIN" ] && sudo mv "$TAMARIN_BIN" /usr/local/bin/tamarin-prover && sudo chmod +x /usr/local/bin/tamarin-prover
+          rm -f tamarin.tar.gz
 
       - name: إثبات ${{ matrix.lemma }}
         run: |
           echo "=== إثبات ${{ matrix.lemma }} ==="
           mkdir -p proofs
-          
+
           tamarin-prover atheer_protocol.spthy \
             --prove=${{ matrix.lemma }} \
             +RTS -N$(nproc) -RTS \
             2>&1 | tee proofs/${{ matrix.lemma }}_result.txt
-          
+
           if grep -q "verified" proofs/${{ matrix.lemma }}_result.txt; then
             echo "✅ ${{ matrix.lemma }}: مُثبَت بنجاح"
+            echo "## ${{ matrix.lemma }}: ✅ مُثبَت" >> $GITHUB_STEP_SUMMARY
           else
             echo "❌ ${{ matrix.lemma }}: فشل الإثبات"
+            echo "## ${{ matrix.lemma }}: ❌ فشل" >> $GITHUB_STEP_SUMMARY
             exit 1
           fi
 
@@ -186,7 +303,7 @@ jobs:
           path: proofs/${{ matrix.lemma }}_result.txt
 
   # ===========================================================
-  # JOB 4: إثبات برهان محدد (عند التشغيل اليدوي)
+  # JOB 4: إثبات برهان محدد (عند التشغيل اليدوي فقط)
   # ===========================================================
   verify-single-lemma:
     name: '🎯 إثبات برهان محدد'
@@ -198,28 +315,50 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: تثبيت Tamarin Prover
+      - name: تثبيت Maude
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y tamarin-prover graphviz 2>/dev/null || true
-          if ! command -v tamarin-prover &>/dev/null; then
-            curl -sSL https://github.com/tamarin-prover/tamarin-prover/releases/download/1.8.0/tamarin-prover-1.8.0-linux64-ubuntu.tar.gz \
-              -o tamarin.tar.gz
-            tar -xzf tamarin.tar.gz
-            sudo mv tamarin-prover /usr/local/bin/
+          sudo apt-get install -y graphviz libgmp10 2>/dev/null
+          curl -sSL "https://github.com/SRI-CSL/Maude/releases/download/Maude${MAUDE_VERSION}/maude-linux.zip" \
+            -o maude.zip 2>/dev/null || true
+          if [ -f maude.zip ]; then
+            unzip -q maude.zip -d maude_bin || true
+            MAUDE_BIN=$(find maude_bin -name "maude*" -type f -executable 2>/dev/null | head -1)
+            [ -n "$MAUDE_BIN" ] && sudo cp "$MAUDE_BIN" /usr/local/bin/maude && sudo chmod +x /usr/local/bin/maude
+            rm -rf maude.zip maude_bin
           fi
+          command -v maude &>/dev/null || sudo apt-get install -y maude 2>/dev/null || true
+
+      - name: تثبيت Tamarin Prover
+        run: |
+          BINARY_URL="https://github.com/tamarin-prover/tamarin-prover/releases/download/${TAMARIN_VERSION}/tamarin-prover-${TAMARIN_VERSION}-linux64-ubuntu.tar.gz"
+          curl -sSL "$BINARY_URL" -o tamarin.tar.gz
+          tar -xzf tamarin.tar.gz
+          TAMARIN_BIN=$(find . -maxdepth 3 -name "tamarin-prover" -type f 2>/dev/null | head -1)
+          [ -n "$TAMARIN_BIN" ] && sudo mv "$TAMARIN_BIN" /usr/local/bin/tamarin-prover && sudo chmod +x /usr/local/bin/tamarin-prover
+          rm -f tamarin.tar.gz
 
       - name: إثبات ${{ github.event.inputs.lemma }}
         run: |
           echo "=== إثبات ${{ github.event.inputs.lemma }} ==="
           mkdir -p proofs
-          
+
           tamarin-prover atheer_protocol.spthy \
             --prove=${{ github.event.inputs.lemma }} \
             +RTS -N$(nproc) -RTS \
             2>&1 | tee proofs/single_lemma_result.txt
-          
+
+          echo "--- النتيجة الكاملة ---"
           cat proofs/single_lemma_result.txt
+
+          if grep -q "verified" proofs/single_lemma_result.txt; then
+            echo "✅ ${{ github.event.inputs.lemma }}: مُثبَت"
+            echo "## ${{ github.event.inputs.lemma }}: ✅ مُثبَت" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ ${{ github.event.inputs.lemma }}: فشل"
+            echo "## ${{ github.event.inputs.lemma }}: ❌ فشل" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
 
       - name: رفع النتيجة
         uses: actions/upload-artifact@v4
@@ -244,44 +383,64 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: all-proofs/
+        continue-on-error: true
 
       - name: توليد تقرير موحد
         run: |
           echo "# 📋 تقرير التحقق الرسمي — Atheer Protocol v2.0" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**التاريخ:** $(date -u '+%Y-%m-%d %H:%M UTC')" >> $GITHUB_STEP_SUMMARY
-          echo "**الـ Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "**الـ Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**الـ Branch:** \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "## نتائج البراهين" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| البرهان | النتيجة | الخاصية المُثبَتة |" >> $GITHUB_STEP_SUMMARY
-          echo "|---------|---------|-----------------|" >> $GITHUB_STEP_SUMMARY
-          
+          echo "| البرهان | النتيجة | التحسين المرتبط |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|---------|----------------|" >> $GITHUB_STEP_SUMMARY
+
+          declare -A ENHANCEMENT
+          ENHANCEMENT[Authentication]="أساسي"
+          ENHANCEMENT[Anti_Replay]="أساسي"
+          ENHANCEMENT[Session_Integrity]="التوقيت الذري #5"
+          ENHANCEMENT[Seed_Secrecy]="سلسلة الثقة #1"
+          ENHANCEMENT[MPC_Split_Security]="توقيع العتبة #2"
+          ENHANCEMENT[Distance_Bounding]="تحديد المسافة #3"
+          ENHANCEMENT[Device_Integrity]="نزاهة الجهاز #4"
+          ENHANCEMENT[Counter_Monotonicity]="التوقيت الذري #5"
+          ENHANCEMENT[Switch_NonFrameability]="أساسي"
+
+          TOTAL=0; PASSED=0
           for lemma in Authentication Anti_Replay Session_Integrity \
                        Seed_Secrecy MPC_Split_Security Distance_Bounding \
                        Device_Integrity Counter_Monotonicity \
                        Switch_NonFrameability; do
+            TOTAL=$((TOTAL+1))
             result_file="all-proofs/proof-${lemma}/${lemma}_result.txt"
             if [ -f "$result_file" ] && grep -q "verified" "$result_file"; then
-              echo "| \`$lemma\` | ✅ مُثبَت | — |" >> $GITHUB_STEP_SUMMARY
+              echo "| \`$lemma\` | ✅ مُثبَت | ${ENHANCEMENT[$lemma]:-—} |" >> $GITHUB_STEP_SUMMARY
+              PASSED=$((PASSED+1))
             else
-              echo "| \`$lemma\` | ❌ فشل أو غير مكتمل | — |" >> $GITHUB_STEP_SUMMARY
+              echo "| \`$lemma\` | ❌ فشل أو غير مكتمل | ${ENHANCEMENT[$lemma]:-—} |" >> $GITHUB_STEP_SUMMARY
             fi
           done
-          
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**الإجمالي:** $PASSED / $TOTAL براهين مُثبَتة" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "## التحسينات المُتحقَّق منها" >> $GITHUB_STEP_SUMMARY
-          echo "| التحسين | الـ Lemma | الحالة |" >> $GITHUB_STEP_SUMMARY
-          echo "|---------|---------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| سلسلة الثقة (Chain of Trust) | \`Seed_Secrecy\` | انظر أعلاه |" >> $GITHUB_STEP_SUMMARY
-          echo "| توقيع العتبة (MPC) | \`MPC_Split_Security\` | انظر أعلاه |" >> $GITHUB_STEP_SUMMARY
-          echo "| تحديد المسافة (Distance Bounding) | \`Distance_Bounding\` | انظر أعلاه |" >> $GITHUB_STEP_SUMMARY
-          echo "| نزاهة الجهاز (Play Integrity) | \`Device_Integrity\` | انظر أعلاه |" >> $GITHUB_STEP_SUMMARY
-          echo "| التوقيت الذري (HW Counter) | \`Counter_Monotonicity\` | انظر أعلاه |" >> $GITHUB_STEP_SUMMARY
+          echo "| # | التحسين | الـ Lemma المرتبط |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---------|-----------------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 1 | سلسلة الثقة (Chain of Trust) | \`Seed_Secrecy\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| 2 | توقيع العتبة (MPC) | \`MPC_Split_Security\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| 3 | تحديد المسافة (Distance Bounding) | \`Distance_Bounding\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| 4 | نزاهة الجهاز (Play Integrity) | \`Device_Integrity\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| 5 | التوقيت الذري (HW Counter) | \`Counter_Monotonicity\` + \`Session_Integrity\` |" >> $GITHUB_STEP_SUMMARY
 
       - name: رفع التقرير الموحد
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: verification-summary
           path: all-proofs/
           retention-days: 90
+          if-no-files-found: warn
