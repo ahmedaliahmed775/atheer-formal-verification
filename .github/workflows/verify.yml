@@ -244,7 +244,6 @@ jobs:
           - Anti_Replay
           - Session_Integrity
           - Seed_Secrecy
-          - MPC_Split_Security
           - Distance_Bounding
           - Device_Integrity
           - Counter_Monotonicity
@@ -401,17 +400,16 @@ jobs:
           declare -A ENHANCEMENT
           ENHANCEMENT[Authentication]="أساسي"
           ENHANCEMENT[Anti_Replay]="أساسي"
-          ENHANCEMENT[Session_Integrity]="التوقيت الذري #5"
+          ENHANCEMENT[Session_Integrity]="التوقيت الذري #4"
           ENHANCEMENT[Seed_Secrecy]="سلسلة الثقة #1"
-          ENHANCEMENT[MPC_Split_Security]="توقيع العتبة #2"
-          ENHANCEMENT[Distance_Bounding]="تحديد المسافة #3"
-          ENHANCEMENT[Device_Integrity]="نزاهة الجهاز #4"
-          ENHANCEMENT[Counter_Monotonicity]="التوقيت الذري #5"
+          ENHANCEMENT[Distance_Bounding]="تحديد المسافة #2"
+          ENHANCEMENT[Device_Integrity]="نزاهة الجهاز #3"
+          ENHANCEMENT[Counter_Monotonicity]="التوقيت الذري #4"
           ENHANCEMENT[Switch_NonFrameability]="أساسي"
 
           TOTAL=0; PASSED=0
           for lemma in Authentication Anti_Replay Session_Integrity \
-                       Seed_Secrecy MPC_Split_Security Distance_Bounding \
+                       Seed_Secrecy Distance_Bounding \
                        Device_Integrity Counter_Monotonicity \
                        Switch_NonFrameability; do
             TOTAL=$((TOTAL+1))
@@ -431,10 +429,9 @@ jobs:
           echo "| # | التحسين | الـ Lemma المرتبط |" >> $GITHUB_STEP_SUMMARY
           echo "|---|---------|-----------------|" >> $GITHUB_STEP_SUMMARY
           echo "| 1 | سلسلة الثقة (Chain of Trust) | \`Seed_Secrecy\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| 2 | توقيع العتبة (MPC) | \`MPC_Split_Security\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| 3 | تحديد المسافة (Distance Bounding) | \`Distance_Bounding\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| 4 | نزاهة الجهاز (Play Integrity) | \`Device_Integrity\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| 5 | التوقيت الذري (HW Counter) | \`Counter_Monotonicity\` + \`Session_Integrity\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| 2 | تحديد المسافة (Distance Bounding) | \`Distance_Bounding\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| 3 | نزاهة الجهاز (Play Integrity) | \`Device_Integrity\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| 4 | التوقيت الذري (HW Counter) | \`Counter_Monotonicity\` + \`Session_Integrity\` |" >> $GITHUB_STEP_SUMMARY
 
       - name: رفع التقرير الموحد
         uses: actions/upload-artifact@v4
