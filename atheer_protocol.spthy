@@ -188,8 +188,8 @@ restriction Integrity_Before_Provisioning:
 
 /* Merchant must be registered before settling                             */
 restriction Merchant_Must_Be_Registered:
-    "All mid #ts.
-        SwitchSettled(mid, _) @ #ts
+    "All mid tx_id #ts.
+        SwitchSettled(mid, tx_id) @ #ts
         ==> Ex #tr. MerchantRegistered(mid) @ #tr & #tr < #ts"
 
 
