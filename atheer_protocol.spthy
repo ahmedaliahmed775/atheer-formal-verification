@@ -281,7 +281,7 @@ rule Switch_Provision_Seed:
 /* --- Rule 1.6: Client Receives and Seals Master Seed in TEE ------------- */
 rule Client_Seal_Seed:
     [ In(seed_enc)
-    , !TEE_PrivKey(device_id, _)      /* Device has valid TEE key             */
+    , !TEE_PrivKey(device_id, sk_any) /* Device has valid TEE key             */
     , Fr(~device_ref) ]
   --[ ClientSealedSeed(device_id) ]-->
     /* Unseal using sk is implicit: seed = seed_decrypt(seed_enc, sk).
@@ -300,7 +300,7 @@ rule Client_Seal_Seed:
 /* --- Rule 2.1: Biometric Authentication & Hardware-Timed Session Arming - */
 /*   Enhancement 4: session window tied to hw_monotonic_ctr, not OS clock  */
 rule Client_Biometric_Auth:
-    [ !TEE_PrivKey(device_id, _)
+    [ !TEE_PrivKey(device_id, sk_any)
     , !HW_Counter(device_id, hw_ctr)
     , Fr(~session_id)
     , Fr(~bio_challenge) ]
@@ -315,7 +315,7 @@ rule Client_Biometric_Auth:
 rule Merchant_DB_Challenge:
     [ Fr(~chall)
     , Fr(~round_id)
-    , !Merchant_PrivKey(merchant_id, _) ]
+    , !Merchant_PrivKey(merchant_id, sk_merch) ]
   --[ DB_Challenge(~chall, ~round_id) ]-->
     [ MerchantWaiting_DB(merchant_id, ~chall, ~round_id)
     , Out(~chall) ]
@@ -468,7 +468,7 @@ lemma Authentication:
         TransactionSettled(client_id, mid, luk, tx_id) @ #ts
         ==>
         Ex session_id amount merchant_id #tc.
-            ClientSentAPDU(client_id, session_id, luk, _, amount, merchant_id) @ #tc
+            ClientSentAPDU(client_id, session_id, luk, n, amount, merchant_id) @ #tc
             & #tc < #ts"
 
 /*
@@ -564,7 +564,7 @@ lemma Switch_NonFrameability:
         SwitchSettled(mid, tx_id) @ #ts
         ==>
         Ex client_id luk db_prf #tv #tdb.
-            SwitchVerifiedSignature(client_id, luk, _, _) @ #tv
+            SwitchVerifiedSignature(client_id, luk, pabc_sig, pk_cl) @ #tv
             & SwitchVerifiedProximity(client_id, db_prf) @ #tdb
             & #tv = #ts
             & #tdb = #ts"
