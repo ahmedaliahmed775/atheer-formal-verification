@@ -1,5 +1,9 @@
 name: Atheer Protocol — Formal Verification
 
+# ============================================================
+# يُشغَّل هذا الـ workflow عند الـ Push أو الـ Pull Request
+# أو يدوياً عبر workflow_dispatch
+# ============================================================
 on:
   push:
     branches: [ main, develop ]
@@ -31,12 +35,12 @@ env:
 
 jobs:
   # ===========================================================
-  # JOB 1: فحص بناء الجملة
+  # JOB 1: فحص بناء الجملة (Syntax Check)
   # ===========================================================
   syntax-check:
     name: '🔍 فحص بناء الجملة'
     runs-on: ubuntu-22.04
-    timeout-minutes: 180
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -105,7 +109,6 @@ jobs:
     runs-on: ubuntu-22.04
     needs: verify-executability
     strategy:
-      fail-fast: falsestrategy:
       fail-fast: false
       matrix:
         lemma: [Authentication, Anti_Replay, Session_Integrity, Seed_Secrecy, Distance_Bounding, Device_Integrity, Counter_Monotonicity, Switch_NonFrameability, Merchant_ZK]
