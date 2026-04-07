@@ -38,16 +38,27 @@ jobs:
         env:
           FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
-      - name: Install Tamarin
+      - name: Install Tamarin and Maude
         run: |
+          # 1. تثبيت Tamarin
           echo "⬇️  Downloading Tamarin ${{ env.TAMARIN_VERSION }}..."
           curl -fsSL "${{ env.TAMARIN_URL }}" -o tamarin.tar.gz
           tar -xzf tamarin.tar.gz
           sudo mv tamarin-prover /usr/local/bin/tamarin-prover
           sudo chmod +x /usr/local/bin/tamarin-prover
+          
+          # 2. تثبيت Maude مدعوم (إصدار 3.3.1)
+          echo "⬇️  Downloading supported Maude (3.3.1)..."
           sudo apt-get update -qq
-          sudo apt-get install -y maude
+          sudo apt-get install -y unzip
+          curl -fsSL "https://maude.cs.illinois.edu/w/images/1/15/Maude-3.3.1-linux.zip" -o maude.zip
+          unzip -q maude.zip
+          sudo cp maude-3.3.1-linux/maude.linux64 /usr/local/bin/maude
+          sudo chmod +x /usr/local/bin/maude
+          
+          # 3. التحقق من الإصدارات
           tamarin-prover --version
+          maude --version
 
       - name: Syntax check
         run: |
@@ -67,14 +78,21 @@ jobs:
         env:
           FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
-      - name: Install Tamarin
+      - name: Install Tamarin and Maude
         run: |
+          # 1. تثبيت Tamarin
           curl -fsSL "${{ env.TAMARIN_URL }}" -o tamarin.tar.gz
           tar -xzf tamarin.tar.gz
           sudo mv tamarin-prover /usr/local/bin/tamarin-prover
           sudo chmod +x /usr/local/bin/tamarin-prover
+          
+          # 2. تثبيت Maude مدعوم (إصدار 3.3.1)
           sudo apt-get update -qq
-          sudo apt-get install -y maude
+          sudo apt-get install -y unzip
+          curl -fsSL "https://maude.cs.illinois.edu/w/images/1/15/Maude-3.3.1-linux.zip" -o maude.zip
+          unzip -q maude.zip
+          sudo cp maude-3.3.1-linux/maude.linux64 /usr/local/bin/maude
+          sudo chmod +x /usr/local/bin/maude
 
       - name: Prove Executability
         run: |
@@ -126,14 +144,21 @@ jobs:
         env:
           FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
-      - name: Install Tamarin
+      - name: Install Tamarin and Maude
         run: |
+          # 1. تثبيت Tamarin
           curl -fsSL "${{ env.TAMARIN_URL }}" -o tamarin.tar.gz
           tar -xzf tamarin.tar.gz
           sudo mv tamarin-prover /usr/local/bin/tamarin-prover
           sudo chmod +x /usr/local/bin/tamarin-prover
+          
+          # 2. تثبيت Maude مدعوم (إصدار 3.3.1)
           sudo apt-get update -qq
-          sudo apt-get install -y maude
+          sudo apt-get install -y unzip
+          curl -fsSL "https://maude.cs.illinois.edu/w/images/1/15/Maude-3.3.1-linux.zip" -o maude.zip
+          unzip -q maude.zip
+          sudo cp maude-3.3.1-linux/maude.linux64 /usr/local/bin/maude
+          sudo chmod +x /usr/local/bin/maude
 
       - name: Prove ${{ matrix.lemma }}
         run: |
