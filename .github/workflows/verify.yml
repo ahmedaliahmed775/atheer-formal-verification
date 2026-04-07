@@ -18,10 +18,13 @@ on:
 
 env:
   TAMARIN_VERSION: "1.8.0"
-  # حد الذاكرة الصريح لمنع OOM / Exit 143
   TAMARIN_RTS_FLAGS: "+RTS -N2 -M6G -RTS"
-  # [FIX CI] رابط البينار الرسمي — tamarin-prover غير موجود في apt على Ubuntu 24.04
   TAMARIN_URL: "https://github.com/tamarin-prover/tamarin-prover/releases/download/1.8.0/tamarin-prover-1.8.0-linux64-ubuntu.tar.gz"
+  # [FIX] Maude 3.3.1 — آخر إصدار مدعوم صراحةً من Tamarin 1.8.0
+  # apt على Ubuntu 24.04 يثبّت 3.2 وهو مرفوض (يُسبب التعليق اللانهائي)
+  # القائمة المدعومة: 2.7.1, 3.0, 3.1, 3.2.1, 3.2.2, 3.3, 3.3.1
+  MAUDE_VERSION: "3.3.1"
+  MAUDE_URL: "https://github.com/maude-lang/Maude/releases/download/Maude3.3.1/Maude-3.3.1-linux.zip"
 
 jobs:
 
@@ -38,15 +41,26 @@ jobs:
         env:
           FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
-      - name: Install Tamarin
+      - name: Install Maude ${{ env.MAUDE_VERSION }} + Tamarin ${{ env.TAMARIN_VERSION }}
         run: |
+          # ── Maude 3.3.1 (مدعوم) بدلاً من apt maude 3.2 (مرفوض) ──
+          curl -fsSL "${{ env.MAUDE_URL }}" -o maude.zip
+          unzip -q maude.zip -d maude_dist
+          # الملف التنفيذي داخل المجلد المضغوط
+          MAUDE_BIN=$(find maude_dist -name "maude.linux64" -type f | head -1)
+          sudo cp "${MAUDE_BIN}" /usr/local/bin/maude
+          sudo chmod +x /usr/local/bin/maude
+          # نسخ ملفات prelude المطلوبة لنفس المجلد
+          MAUDE_DIR=$(dirname "${MAUDE_BIN}")
+          sudo cp "${MAUDE_DIR}"/*.maude /usr/local/bin/ 2>/dev/null || true
+          # ── Tamarin ──
           echo "⬇️  Downloading Tamarin ${{ env.TAMARIN_VERSION }}..."
           curl -fsSL "${{ env.TAMARIN_URL }}" -o tamarin.tar.gz
           tar -xzf tamarin.tar.gz
           sudo mv tamarin-prover /usr/local/bin/tamarin-prover
           sudo chmod +x /usr/local/bin/tamarin-prover
-          sudo apt-get update -qq
-          sudo apt-get install -y maude
+          # ── تحقق ──
+          echo "Maude: $(maude --version 2>&1 | head -1)"
           tamarin-prover --version
 
       - name: Syntax check
@@ -67,14 +81,19 @@ jobs:
         env:
           FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
-      - name: Install Tamarin
+      - name: Install Maude ${{ env.MAUDE_VERSION }} + Tamarin ${{ env.TAMARIN_VERSION }}
         run: |
+          curl -fsSL "${{ env.MAUDE_URL }}" -o maude.zip
+          unzip -q maude.zip -d maude_dist
+          MAUDE_BIN=$(find maude_dist -name "maude.linux64" -type f | head -1)
+          sudo cp "${MAUDE_BIN}" /usr/local/bin/maude
+          sudo chmod +x /usr/local/bin/maude
+          MAUDE_DIR=$(dirname "${MAUDE_BIN}")
+          sudo cp "${MAUDE_DIR}"/*.maude /usr/local/bin/ 2>/dev/null || true
           curl -fsSL "${{ env.TAMARIN_URL }}" -o tamarin.tar.gz
           tar -xzf tamarin.tar.gz
           sudo mv tamarin-prover /usr/local/bin/tamarin-prover
           sudo chmod +x /usr/local/bin/tamarin-prover
-          sudo apt-get update -qq
-          sudo apt-get install -y maude
 
       - name: Prove Executability
         run: |
@@ -126,14 +145,19 @@ jobs:
         env:
           FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
-      - name: Install Tamarin
+      - name: Install Maude ${{ env.MAUDE_VERSION }} + Tamarin ${{ env.TAMARIN_VERSION }}
         run: |
+          curl -fsSL "${{ env.MAUDE_URL }}" -o maude.zip
+          unzip -q maude.zip -d maude_dist
+          MAUDE_BIN=$(find maude_dist -name "maude.linux64" -type f | head -1)
+          sudo cp "${MAUDE_BIN}" /usr/local/bin/maude
+          sudo chmod +x /usr/local/bin/maude
+          MAUDE_DIR=$(dirname "${MAUDE_BIN}")
+          sudo cp "${MAUDE_DIR}"/*.maude /usr/local/bin/ 2>/dev/null || true
           curl -fsSL "${{ env.TAMARIN_URL }}" -o tamarin.tar.gz
           tar -xzf tamarin.tar.gz
           sudo mv tamarin-prover /usr/local/bin/tamarin-prover
           sudo chmod +x /usr/local/bin/tamarin-prover
-          sudo apt-get update -qq
-          sudo apt-get install -y maude
 
       - name: Prove ${{ matrix.lemma }}
         run: |
