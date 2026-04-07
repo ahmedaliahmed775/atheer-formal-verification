@@ -20,7 +20,7 @@ env:
   TAMARIN_VERSION: "1.8.0"
   # حد الذاكرة الصريح لمنع OOM / Exit 143
   TAMARIN_RTS_FLAGS: "+RTS -N2 -M6G -RTS"
-  # [FIX CI] رابط البينار الرسمي — tamarin-prover غير موجود في apt على Ubuntu 24.04
+  # رابط البينار الرسمي
   TAMARIN_URL: "https://github.com/tamarin-prover/tamarin-prover/releases/download/1.8.0/tamarin-prover-1.8.0-linux64-ubuntu.tar.gz"
 
 jobs:
@@ -30,7 +30,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────────
   syntax-check:
     name: "🔍 فحص بناء الجملة"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04 # [FIX] استخدام 22.04 لتثبيت Maude 3.1 المدعوم رسمياً من Tamarin
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -38,27 +38,16 @@ jobs:
         env:
           FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
-      - name: Install Tamarin and Maude
+      - name: Install Tamarin
         run: |
-          # 1. تثبيت Tamarin
           echo "⬇️  Downloading Tamarin ${{ env.TAMARIN_VERSION }}..."
           curl -fsSL "${{ env.TAMARIN_URL }}" -o tamarin.tar.gz
           tar -xzf tamarin.tar.gz
           sudo mv tamarin-prover /usr/local/bin/tamarin-prover
           sudo chmod +x /usr/local/bin/tamarin-prover
-          
-          # 2. تثبيت Maude مدعوم (إصدار 3.3.1)
-          echo "⬇️  Downloading supported Maude (3.3.1)..."
           sudo apt-get update -qq
-          sudo apt-get install -y unzip
-          curl -fsSL "https://maude.cs.illinois.edu/w/images/1/15/Maude-3.3.1-linux.zip" -o maude.zip
-          unzip -q maude.zip
-          sudo cp maude-3.3.1-linux/maude.linux64 /usr/local/bin/maude
-          sudo chmod +x /usr/local/bin/maude
-          
-          # 3. التحقق من الإصدارات
+          sudo apt-get install -y maude
           tamarin-prover --version
-          maude --version
 
       - name: Syntax check
         run: |
@@ -70,7 +59,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────────
   verify-executability:
     name: "⚡ إثبات سريع — Executability"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04 # [FIX] استخدام 22.04
     timeout-minutes: 30
     needs: syntax-check
     steps:
@@ -78,21 +67,14 @@ jobs:
         env:
           FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
-      - name: Install Tamarin and Maude
+      - name: Install Tamarin
         run: |
-          # 1. تثبيت Tamarin
           curl -fsSL "${{ env.TAMARIN_URL }}" -o tamarin.tar.gz
           tar -xzf tamarin.tar.gz
           sudo mv tamarin-prover /usr/local/bin/tamarin-prover
           sudo chmod +x /usr/local/bin/tamarin-prover
-          
-          # 2. تثبيت Maude مدعوم (إصدار 3.3.1)
           sudo apt-get update -qq
-          sudo apt-get install -y unzip
-          curl -fsSL "https://maude.cs.illinois.edu/w/images/1/15/Maude-3.3.1-linux.zip" -o maude.zip
-          unzip -q maude.zip
-          sudo cp maude-3.3.1-linux/maude.linux64 /usr/local/bin/maude
-          sudo chmod +x /usr/local/bin/maude
+          sudo apt-get install -y maude
 
       - name: Prove Executability
         run: |
@@ -121,7 +103,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────────
   verify-security-lemmas:
     name: "🔐 ${{ matrix.lemma }}"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04 # [FIX] استخدام 22.04
     timeout-minutes: 60
     needs: verify-executability
     strategy:
@@ -144,21 +126,14 @@ jobs:
         env:
           FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
-      - name: Install Tamarin and Maude
+      - name: Install Tamarin
         run: |
-          # 1. تثبيت Tamarin
           curl -fsSL "${{ env.TAMARIN_URL }}" -o tamarin.tar.gz
           tar -xzf tamarin.tar.gz
           sudo mv tamarin-prover /usr/local/bin/tamarin-prover
           sudo chmod +x /usr/local/bin/tamarin-prover
-          
-          # 2. تثبيت Maude مدعوم (إصدار 3.3.1)
           sudo apt-get update -qq
-          sudo apt-get install -y unzip
-          curl -fsSL "https://maude.cs.illinois.edu/w/images/1/15/Maude-3.3.1-linux.zip" -o maude.zip
-          unzip -q maude.zip
-          sudo cp maude-3.3.1-linux/maude.linux64 /usr/local/bin/maude
-          sudo chmod +x /usr/local/bin/maude
+          sudo apt-get install -y maude
 
       - name: Prove ${{ matrix.lemma }}
         run: |
@@ -205,7 +180,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────────
   summary:
     name: "📊 ملخص النتائج"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04 # [FIX] استخدام 22.04
     needs: [verify-executability, verify-security-lemmas]
     if: always()
     steps:
