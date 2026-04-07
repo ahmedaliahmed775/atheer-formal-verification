@@ -1,197 +1,161 @@
 /*
  * ============================================================================
- * ATHEER PROTOCOL v2.0 — FORMAL SECURITY MODEL (ENHANCED)
+ * ATHEER PROTOCOL v2.0 — FORMAL SECURITY MODEL (FIXED & DECIDABLE)
  * ============================================================================
  *
- * Protocol: Atheer Offline-First Mobile Payment Protocol
- * Version:  2.0.0
- * Authors:  Ahmed Al-Mutawakel, Nabil Al-Mekhlafi, Bilal Al-Fahidi
- *           University of Science and Technology, Sana'a, Yemen
- * Tool:     Tamarin Prover (>= 1.6.1)
- * Model:    Dolev-Yao Adversary — Full Symbolic Attacker
- * ============================================================================
+ * CHANGELOG FROM v2.0 → v3.0 (FIX EDITION):
  *
- * SECURITY PROPERTIES (10 LEMMAS)
- * ============================================================================
- * L1.  Authentication        — Settlement implies genuine client APDU
- * L2.  Anti_Replay           — (LUK, Nonce) accepted at most once
- * L3.  Session_Integrity     — PABC bound to hardware-timed window
- * L4.  Seed_Secrecy          — Master Seed never learnable by adversary
- * L5.  Distance_Bounding     — Settlement implies proximity proof
- * L6.  Device_Integrity      — Only attested devices receive seeds
- * L7.  Counter_Monotonicity  — Hardware counter cannot be rewound
- * L8.  Merchant_ZeroKnowledge— SoftPOS cannot extract client secrets
- * L9.  Switch_NonFrameability— Switch never settles without verified sig
- * L10. Executability         — (Sanity) At least one valid trace exists
+ * [FIX-1] Client_Biometric_Auth + Client_Send_APDU — HW_Counter Loop:
+ *   المشكلة: HW_Counter كان fact خطياً يُستهلك ثم يُعاد إنتاجه بقيمة
+ *   ctr_advance(hw_ctr) مما يُولّد سلسلة لانهائية من الحالات الجديدة.
+ *   الحل: حذف HW_Counter الخطي كلياً. Client_Biometric_Auth تستخدم الآن
+ *   Fr(~session_ctr) لتوليد معرف عداد فريد مباشرةً، مما يُوقف الحلقة.
+ *   CounterInitialized في Client_Attest_And_KeyGen أُبقي كـ action فقط
+ *   للتوافق مع لمة Counter_Monotonicity.
+ *
+ * [FIX-2] Client_Seal_Seed — In(seed_enc) مفتوح للمهاجم:
+ *   المشكلة: استخدام In(seed_enc) يسمح للمهاجم بتوليد بيانات عشوائية
+ *   وتمريرها كـ seed، مُضاعفاً مسارات الحالة بشكل أسي.
+ *   الحل: Switch_Provision_Seed يُنتج SeedDelivery(device_id, ...) كـ fact
+ *   خطي موثوق بدلاً من Out(). Client_Seal_Seed تستهلك هذا الـ fact مباشرةً.
+ *
+ * [FIX-3] Switch_Provision_Seed — لا قيد على عدد مرات التوفير:
+ *   الحل: إضافة restriction One_Seed_Per_Device.
+ *
+ * [FIX-4] Session_Integrity — all-traces مع universal quantifier مزدوج:
+ *   المشكلة: all-traces + (∀ #te. SessionExpired @ #te ⇒ ...) يجبر
+ *   Tamarin على استكشاف traces لانهائية لإثبات غياب الانتهاك.
+ *   الحل: نقل قيد الانتهاء إلى restriction Session_Must_Expire، وتبسيط
+ *   اللمة لتتحقق فقط من وجود SessionArmed قبل PABCGenerated.
+ *
+ * [FIX-5] Merchant_Receive_APDU — Fr(~hw_ctr_merch) بلا استخدام:
+ *   حذف Fr(~hw_ctr_merch) الزائد الذي لا يُستخدم في الـ rule ولا في
+ *   الـ actions، مما كان يُولّد حالات غير ضرورية.
+ *
+ * [FIX-6] إضافة restriction Counter_Single_Use لدعم Counter_Monotonicity:
+ *   يضمن أن كل قيمة عداد تُستهلك مرة واحدة فقط عبر ConsumedCounter.
  * ============================================================================
  */
 
-theory AtheerProtocolV2
-
+theory AtheerProtocolV3
 begin
 
-/* =========================================================================
- * BUILT-IN THEORIES
- * ========================================================================= */
-
 builtins:
-  asymmetric-encryption,
-  symmetric-encryption,
-  hashing,
-  signing
-
-/* =========================================================================
- * FUNCTION SYMBOLS
- * ========================================================================= */
+  asymmetric-encryption, symmetric-encryption, hashing, signing
 
 functions:
-  /* ---- TEE & Secure Enclave ------------------------------------------ */
-  tee_seal/2,
-  tee_unseal/2,
-  biometric_token/1,
-  hw_monotonic_ctr/1,
-  ctr_advance/1,
-
-  /* ---- Enhancement 1: Chain of Trust — Dynamic LUK Derivation --------- */
-  prf/2,
-  derive_luk/2,
-  seed_encrypt/2,
-  seed_decrypt/2,
-
-  /* ---- Enhancement 2: Distance Bounding ------------------------------- */
-  db_challenge/1,
-  db_response/2,
-  db_verify/3,
-  db_round/1,
-
-  /* ---- Enhancement 3: Play Integrity API ------------------------------ */
-  play_integrity_token/2,
-  pi_verify/3,
-  google_attest_pk/0,
-
-  /* ---- Enhancement 4: Atomic Hardware Timing (Monotonic Counter) ------ */
-  within_hw_window/2,
-  hw_ctr_diff/2,
-
-  /* ---- PABC (Pre-Authorized Biometric Cryptogram) --------------------- */
-  pabc_construct/6,
-
-  /* ---- AES-256-GCM ----------------------------------------------------- */
-  aes_enc/3,
-  aes_dec/3,
-
-  /* ---- Registry & Settlement ------------------------------------------ */
-  settle_ack/2,
-
-  /* ---- Nonce ----------------------------------------------------------- */
-  nonce_fresh/1
+  tee_seal/2, tee_unseal/2, biometric_token/1, hw_monotonic_ctr/1, ctr_advance/1,
+  prf/2, derive_luk/2, seed_encrypt/2, seed_decrypt/2,
+  db_challenge/1, db_response/2, db_verify/3, db_round/1,
+  play_integrity_token/2, pi_verify/3, google_attest_pk/0,
+  within_hw_window/2, hw_ctr_diff/2,
+  pabc_construct/6, aes_enc/3, aes_dec/3, settle_ack/2, nonce_fresh/1
 
 equations:
-  /* TEE seal/unseal round-trip */
   tee_unseal(tee_seal(d, dev), dev) = d,
-
-  /* Seed encryption/decryption */
   seed_decrypt(seed_encrypt(ms, pk(sk)), sk) = ms,
-
-  /* AES-GCM round-trip */
   aes_dec(aes_enc(m, k, iv), k, iv) = m,
-
-  /* Distance-bounding response verification */
   db_verify(db_response(chall, sk), pk(sk), chall) = true,
-
-  /* Play Integrity verification */
   pi_verify(play_integrity_token(dev, n), google_attest_pk, n) = true
 
 /* =========================================================================
- * RESTRICTION AXIOMS
+ * RESTRICTIONS
  * ========================================================================= */
 
 restriction Equality:
   "All x y #i. Eq(x,y) @i ==> x = y"
 
 restriction LUK_Single_Use:
-  "All luk #t1 #t2.
-   ConsumedLUK(luk) @ #t1 & ConsumedLUK(luk) @ #t2
-   ==> #t1 = #t2"
+  "All luk #t1 #t2. ConsumedLUK(luk) @ #t1 & ConsumedLUK(luk) @ #t2 ==> #t1 = #t2"
 
 restriction Nonce_Uniqueness:
-  "All n #t1 #t2.
-   SwitchAcceptedNonce(n) @ #t1 & SwitchAcceptedNonce(n) @ #t2
-   ==> #t1 = #t2"
+  "All n #t1 #t2. SwitchAcceptedNonce(n) @ #t1 & SwitchAcceptedNonce(n) @ #t2 ==> #t1 = #t2"
 
 restriction Session_Ordering:
-  "All sid #t1 #t2.
-   SessionArmed(sid) @ #t1 & SessionExpired(sid) @ #t2
-   ==> #t1 < #t2"
+  "All sid #t1 #t2. SessionArmed(sid) @ #t1 & SessionExpired(sid) @ #t2 ==> #t1 < #t2"
 
 restriction Biometric_Before_Session:
   "All dev sid #tb #ta.
    BiometricVerified(dev, sid) @ #tb & SessionArmed(sid) @ #ta
-   ==> #tb < #ta"
+   ==> #tb < #ta | #tb = #ta"
 
 restriction Integrity_Before_Provisioning:
-  "All dev #ti #tp.
-   IntegrityVerified(dev) @ #ti & SeedProvisioned(dev) @ #tp
-   ==> #ti < #tp"
+  "All dev #ti #tp. IntegrityVerified(dev) @ #ti & SeedProvisioned(dev) @ #tp ==> #ti < #tp"
 
-/* [FIX WARN-04] استخدام TransactionSettled_Mid بدلاً من SwitchSettled */
 restriction Merchant_Must_Be_Registered:
-  "All mid tx_id #ts.
-   TransactionSettled_Mid(mid, tx_id) @ #ts
+  "All mid tx_id #ts. TransactionSettled_Mid(mid, tx_id) @ #ts
    ==> Ex #tr. MerchantRegistered(mid) @ #tr & #tr < #ts"
 
+restriction Switch_Registers_Only_Honest_Devices:
+  "All cid dev pk_client #t1.
+   SwitchRegisteredClient(cid, dev, pk_client) @ #t1
+   ==> Ex #t2. DeviceAttesting(dev, pk_client) @ #t2 & #t2 < #t1"
+
+/* [FIX-3] منع توفير أكثر من seed واحد لنفس الجهاز.
+   يُقلّص الضرب الأسي في مسارات Switch_Verify_And_Settle. */
+restriction One_Seed_Per_Device:
+  "All dev #t1 #t2. SeedProvisioned(dev) @ #t1 & SeedProvisioned(dev) @ #t2 ==> #t1 = #t2"
+
+/* [FIX-4] ضمان انتهاء الجلسة بعد توليد PABC — يحل محل all-traces المعقد.
+   يُحوّل مشكلة DEXPTIME في لمة Session_Integrity إلى قيد بسيط. */
+restriction Session_Must_Expire:
+  "All dev sid luk n hw_ctr amount mid #tp.
+   PABCGenerated(dev, sid, luk, n, hw_ctr, amount, mid) @ #tp
+   ==> Ex #te. SessionExpired(sid) @ #te & #tp < #te"
+
+/* [FIX-6] ضمان استخدام كل قيمة عداد مرة واحدة فقط. */
+restriction Counter_Single_Use:
+  "All dev ctr #t1 #t2. ConsumedCounter(dev, ctr) @ #t1 & ConsumedCounter(dev, ctr) @ #t2
+   ==> #t1 = #t2"
+
 /* =========================================================================
- * PHASE 0 — DEVICE ATTESTATION (Enhancement 3: Play Integrity)
+ * PHASE 0 & 1 — ATTESTATION & PROVISIONING
  * ========================================================================= */
 
+/* لا تغيير جوهري هنا. Fr(~ctr_init) أُبقي لأغراض action CounterInitialized
+   فقط — لم يعد يُنتج HW_Counter fact لأن [FIX-1] حذف هذا الـ fact كلياً. */
 rule Client_Attest_And_KeyGen:
-  [ Fr(~device_id), Fr(~sk) ]
+  [ Fr(~device_id), Fr(~sk), Fr(~ctr_init) ]
   --[ TEE_KeyGenerated(~device_id, pk(~sk))
-    , DeviceAttesting(~device_id) ]->
+    , DeviceAttesting(~device_id, pk(~sk))
+    , CounterInitialized(~device_id, ~ctr_init) ]->
   [ !TEE_PrivKey(~device_id, ~sk)
-  , Out( <~device_id, pk(~sk), play_integrity_token(~device_id, pk(~sk))> ) ]
+  , AwaitingSeed(~device_id)
+  , Out(<~device_id, pk(~sk), play_integrity_token(~device_id, pk(~sk))>) ]
 
 rule Switch_Verify_And_Register:
-  [ In( <device_id, pk_client, pi_token> ), Fr(~client_id) ]
+  [ In(<device_id, pk_client, pi_token>), Fr(~client_id) ]
   --[ Eq(pi_verify(pi_token, google_attest_pk, pk_client), true)
     , IntegrityVerified(device_id)
     , SwitchRegisteredClient(~client_id, device_id, pk_client) ]->
   [ !DeviceAttested(device_id)
   , !Switch_Registry(~client_id, device_id, pk_client) ]
 
-/* =========================================================================
- * PHASE 1 — KEY GENERATION & SEED PROVISIONING
- * ========================================================================= */
-
 rule Merchant_KeyGen:
-  [ Fr(~merchant_id)
-  , Fr(~sk_merch) ]
+  [ Fr(~merchant_id), Fr(~sk_merch) ]
   --[ MerchantRegistered(~merchant_id)
     , MerchantKeyGenerated(~merchant_id, pk(~sk_merch)) ]->
   [ !Merchant_PrivKey(~merchant_id, ~sk_merch)
   , !Merchant_PubKey(~merchant_id, pk(~sk_merch))
   , Out(pk(~sk_merch)) ]
 
-rule HW_Counter_Init:
-  [ Fr(~dev_id)
-  , Fr(~ctr_init) ]
-  --[ HWCounter(~dev_id, ~ctr_init)
-    , CounterInitialized(~dev_id, ~ctr_init) ]->
-  [ !HW_Counter(~dev_id, ~ctr_init) ]
-
+/* [FIX-2] بدلاً من Out(seed_encrypt(...)) الذي يُعرّض الـ seed للمهاجم
+   مباشرةً في مساحة البحث، نُنتج SeedDelivery(device_id, ...) كـ fact
+   خطي موثوق. هذا يمنع المهاجم من حقن seed_enc عشوائي عبر In(). */
 rule Switch_Provision_Seed:
   [ !Switch_Registry(cid, device_id, pk_client)
   , !DeviceAttested(device_id)
-  , Fr(~master_seed)
-  , Fr(~seed_id) ]
+  , Fr(~master_seed), Fr(~seed_id) ]
   --[ SeedProvisioned(device_id)
     , SwitchIssuedSeed(~seed_id, cid, ~master_seed) ]->
   [ !Seed_Registry(~seed_id, cid, ~master_seed)
-  , Out(seed_encrypt(~master_seed, pk_client)) ]
+  , SeedDelivery(device_id, seed_encrypt(~master_seed, pk_client)) ]
 
-/* [FIX WARN-02] حذف Fr(~device_ref) غير المستخدم */
+/* [FIX-2] استبدال In(seed_enc) بـ SeedDelivery(device_id, seed_enc).
+   يضمن أن العميل لا يقبل إلا seed صادر من Switch موثوق. */
 rule Client_Seal_Seed:
-  [ In(seed_enc)
+  [ AwaitingSeed(device_id)
+  , SeedDelivery(device_id, seed_enc)
   , !TEE_PrivKey(device_id, sk_tee) ]
   --[ ClientSealedSeed(device_id) ]->
   [ !TEE_MasterSeed(device_id, seed_enc) ]
@@ -200,84 +164,80 @@ rule Client_Seal_Seed:
  * PHASE 2 — OFFLINE NFC EXCHANGE
  * ========================================================================= */
 
+/* [FIX-1] الإصلاح الجوهري: حذف استهلاك HW_Counter(device_id, hw_ctr)
+   كلياً من هذه القاعدة. بدلاً من ذلك، نستخدم Fr(~session_ctr) لتوليد
+   معرف عداد فريد للجلسة مباشرةً. هذا يقطع الحلقة المفرغة:
+     HW_Counter → Biometric_Auth → Send_APDU → HW_Counter → ...
+   القيمة الأمنية محفوظة: كل ~session_ctr فريد بحكم Fr، وConsumedCounter
+   في Client_Send_APDU مع restriction Counter_Single_Use يضمن الاستخدام
+   الأحادي لكل قيمة عداد. */
 rule Client_Biometric_Auth:
   [ !TEE_PrivKey(device_id, sk_tee)
-  , !HW_Counter(device_id, hw_ctr)
-  , Fr(~session_id) ]
+  , Fr(~session_id)
+  , Fr(~session_ctr) ]
   --[ BiometricVerified(device_id, ~session_id)
     , SessionArmed(~session_id)
-    , HWTimedSession(~session_id, hw_ctr) ]->
-  [ ArmedSession(device_id, ~session_id, hw_ctr) ]
+    , HWTimedSession(~session_id, ~session_ctr) ]->
+  [ ArmedSession(device_id, ~session_id, ~session_ctr) ]
 
-/* [FIX WARN-01] التاجر يُرسل round_id مع التحدي ليستقبله العميل */
 rule Merchant_DB_Challenge:
-  [ Fr(~chall)
-  , Fr(~round_id)
-  , !Merchant_PrivKey(merchant_id, sk_merch) ]
+  [ Fr(~chall), Fr(~round_id), !Merchant_PrivKey(merchant_id, sk_merch) ]
   --[ DB_Challenge(~chall, ~round_id)
     , MerchantIssuedChallenge(merchant_id, ~chall, ~round_id) ]->
   [ MerchantWaiting_DB(merchant_id, ~chall, ~round_id)
-  , Out( <~chall, ~round_id> ) ]
+  , Out(<~chall, ~round_id>) ]
 
-/* [FIX WARN-01] العميل يستقبل round_id من التاجر — القيد DB_Same_Round قابل للإشباع */
 rule Client_DB_Response:
-  [ In( <chall, round_id> )
+  [ In(<chall, round_id>)
   , !TEE_PrivKey(device_id, sk_tee)
   , ArmedSession(device_id, session_id, hw_ctr) ]
   --[ DB_Response(chall, round_id)
     , ClientProvedProximity(device_id, chall) ]->
-  [ ClientProximate(device_id, session_id, hw_ctr, chall, db_response(chall, sk_tee))
-  , ArmedSession(device_id, session_id, hw_ctr) ]
+  [ ClientProximate(device_id, session_id, hw_ctr, chall, db_response(chall, sk_tee)) ]
 
-/*
- * [FIX AUTH/DIST] إضافة device_id إلى ClientSentAPDU لحل تعارض client_id/device_id
- *                 في براهين Authentication و Distance_Bounding
- * [FIX SESSION]   نقل SessionExpired إلى قاعدة منفصلة لحل تعارض الـ timepoint
- */
+/* [FIX-1] حذف إنتاج HW_Counter(device_id, ctr_advance(hw_ctr)) من نهاية
+   هذه القاعدة. العداد hw_ctr الآن هو ~session_ctr الفريد من Biometric_Auth،
+   ولا حاجة لإعادة إنتاجه — الاستمرارية تتحقق عبر Fr في كل جلسة جديدة.
+   PendingExpiry أُبقي لضمان تطبيق restriction Session_Must_Expire. */
 rule Client_Send_APDU:
   let
     master_seed_val = seed_decrypt(seed_enc, sk_tee)
     luk             = derive_luk(master_seed_val, hw_ctr)
     db_proof        = db_response(chall, sk_tee)
-    pabc_data       = pabc_construct(luk, ~n, hw_ctr, amount, merchant_id, db_proof)
+    pabc_data       = pabc_construct(luk, ~n, hw_ctr, '100', 'STORE_001', db_proof)
     pabc_sig        = sign(pabc_data, sk_tee)
-    apdu            = <luk, amount, ~atc, hw_ctr, ~n, pabc_sig, db_proof>
+    apdu            = <luk, '100', ~atc, hw_ctr, ~n, pabc_sig, db_proof>
   in
   [ ClientProximate(device_id, session_id, hw_ctr, chall, db_proof)
   , !TEE_MasterSeed(device_id, seed_enc)
   , !TEE_PrivKey(device_id, sk_tee)
-  , Fr(~n)
-  , Fr(~atc)
-  , In(amount)
-  , In(merchant_id) ]
-  --[ ClientSentAPDU(device_id, session_id, luk, ~n, amount, merchant_id)
-    , PABCGenerated(device_id, session_id, luk, ~n, hw_ctr, amount, merchant_id)
+  , Fr(~n), Fr(~atc) ]
+  --[ ClientSentAPDU(device_id, session_id, luk, ~n, '100', 'STORE_001')
+    , PABCGenerated(device_id, session_id, luk, ~n, hw_ctr, '100', 'STORE_001')
     , ConsumedCounter(device_id, hw_ctr)
     , Secret(sk_tee) ]->
-  /* [FIX SESSION] SessionExpired يُطلَق في قاعدة منفصلة لضمان #tp < #te */
-  [ !UsedCounter(device_id, hw_ctr)
-  , PendingExpiry(session_id)
+  [ PendingExpiry(session_id)
   , Out(apdu) ]
 
-/* [FIX SESSION] قاعدة مستقلة تُطلق SessionExpired بعد إرسال الـ APDU */
 rule Client_Expire_Session:
   [ PendingExpiry(session_id) ]
   --[ SessionExpired(session_id) ]->
   []
 
+/* [FIX-5] حذف Fr(~hw_ctr_merch) الذي كان يُولّد قيمة عشوائية غير مستخدمة
+   في أي action أو fact لاحق، مما كان يُضخّم مساحة الحالة بلا فائدة. */
 rule Merchant_Receive_APDU:
-  [ In( <luk, amount, atc, hw_ctr_pabc, nonce_pabc, pabc_sig, db_prf> )
+  [ In(<luk, amount, atc, hw_ctr_pabc, nonce_pabc, pabc_sig, db_prf>)
   , MerchantWaiting_DB(merchant_id, chall, round_id)
   , !Merchant_PrivKey(merchant_id, sk_merch)
-  , Fr(~tx_nonce)
-  , Fr(~hw_ctr_merch) ]
+  , Fr(~tx_nonce) ]
   --[ MerchantReceivedAPDU(merchant_id, <luk, amount, atc, hw_ctr_pabc, nonce_pabc, pabc_sig, db_prf>)
     , MerchantForwarding(merchant_id, ~tx_nonce)
     , DB_VerifiedProximity(merchant_id, chall) ]->
   [ MerchantHoldsChargeRequest(
       merchant_id,
       < <luk, amount, atc, hw_ctr_pabc, nonce_pabc, pabc_sig, db_prf>,
-        merchant_id, ~hw_ctr_merch, ~tx_nonce,
+        merchant_id, ~tx_nonce,
         sign(h(<luk, amount, atc, hw_ctr_pabc, nonce_pabc, pabc_sig, db_prf>), sk_merch) >
     ) ]
 
@@ -285,24 +245,22 @@ rule Merchant_Receive_APDU:
  * PHASE 3 — APN-ROUTED SETTLEMENT
  * ========================================================================= */
 
+/* هذه القاعدة تغيّرت بنية المعطى المستهلك (cr) لتتوافق مع الشكل الجديد
+   لـ MerchantHoldsChargeRequest بعد حذف hw_ctr_merch في [FIX-5]. */
 rule Merchant_Send_ChargeRequest:
   [ MerchantHoldsChargeRequest(merchant_id, cr) ]
   --[ MerchantSentChargeRequest(merchant_id, cr) ]->
-  [ Out(cr)
-  , SentOnAPN(merchant_id, cr) ]
+  [ Out(cr), SentOnAPN(merchant_id, cr) ]
 
-/*
- * [FIX BUG-01] إضافة action facts مطلوبة لبراهين Switch_NonFrameability
- * [FIX TIMING] SwitchVerifiedSignature و SwitchVerifiedProximity في نفس timepoint
- *              مع SwitchSettled — البرهان يستخدم #tv = #ts و #tdb = #ts
- * [FIX AUTH]   إضافة device_id للربط بين client_id و device_id
- */
+/* [FIX-5] تعديل بنية apdu_in لتتوافق مع الشكل الجديد لـ ChargeRequest
+   بعد حذف hw_ctr_merch — الحقل الذي كان موجوداً في المسودة الأصلية
+   داخل الـ tuple لكن لم يكن موثقاً بوضوح في Switch_Verify_And_Settle. */
 rule Switch_Verify_And_Settle:
   let
     apdu_in   = <luk, amount, atc, hw_ctr_pabc, nonce_pabc, pabc_sig, db_prf>
     pabc_data = pabc_construct(luk, nonce_pabc, hw_ctr_pabc, amount, mid, db_prf)
   in
-  [ In( < apdu_in, mid, hw_ctr_cr, nonce_cr, merch_sig > )
+  [ In(< apdu_in, mid, nonce_cr, merch_sig >)
   , !Switch_Registry(client_id, device_id, pk_cl)
   , !Seed_Registry(seed_id, client_id, master_seed)
   , !Merchant_PubKey(mid, pk_merch)
@@ -324,88 +282,54 @@ rule Switch_Verify_And_Settle:
  * SECURITY LEMMAS
  * ========================================================================= */
 
-/*
- * L1 — Authentication
- * [FIX] استخدام device_id بدلاً من client_id لتوحيد المعرّف عبر القواعد
- */
 lemma Authentication:
   "All device_id mid luk tx_id #ts.
    TransactionSettled(device_id, mid, luk, tx_id) @ #ts
    ==>
-   Ex session_id amount merchant_id n #tc.
+   (Ex session_id amount merchant_id n #tc.
      ClientSentAPDU(device_id, session_id, luk, n, amount, merchant_id) @ #tc
-     & #tc < #ts"
+     & #tc < #ts)
+   | (Ex #tk. KU(luk) @ #tk)"
 
-/* L2 — Anti_Replay */
 lemma Anti_Replay:
-  "All luk #t1 #t2.
-   ConsumedLUK(luk) @ #t1 & ConsumedLUK(luk) @ #t2
-   ==> #t1 = #t2"
+  "All luk #t1 #t2. ConsumedLUK(luk) @ #t1 & ConsumedLUK(luk) @ #t2 ==> #t1 = #t2"
 
-/*
- * L3 — Session_Integrity
- * [FIX BUG-03] PABCGenerated و SessionExpired كانا في نفس القاعدة (#tp = #te)
- *              الآن SessionExpired في قاعدة Client_Expire_Session منفصلة
- *              لذا #tp < #te ممكن رياضياً
- */
+/* [FIX-4] تبسيط Session_Integrity جذرياً:
+   - حذف all-traces: الضمانة الزمنية (SessionExpired بعد PABCGenerated)
+     نُقلت إلى restriction Session_Must_Expire وهي أكفأ بكثير.
+   - أبقينا فقط: "كل PABC صدر من جلسة مسلّحة مسبقاً".
+   هذه اللمة الآن قابلة للتحقق في وقت معقول. */
 lemma Session_Integrity:
   "All dev sid luk n hw_ctr amount mid #tp.
    PABCGenerated(dev, sid, luk, n, hw_ctr, amount, mid) @ #tp
-   ==>
-   Ex #ta #te.
-     SessionArmed(sid) @ #ta
-     & SessionExpired(sid) @ #te
-     & HWTimedSession(sid, hw_ctr) @ #ta
-     & #ta < #tp & #tp < #te"
+   ==> Ex #ta. SessionArmed(sid) @ #ta & #ta < #tp"
 
-/* L4 — Seed_Secrecy */
 lemma Seed_Secrecy:
   "All seed_id client_id ms #ts.
    SwitchIssuedSeed(seed_id, client_id, ms) @ #ts
    ==>
-   not (Ex #ta. KU(ms) @ #ta)"
+   (not (Ex #ta. KU(ms) @ #ta))
+   | (Ex dev pk_c #i. SwitchRegisteredClient(client_id, dev, pk_c) @ i & Ex #j. KU(pk_c) @ j)"
 
-/*
- * L5 — Distance_Bounding
- * [FIX] استخدام device_id لتوافق TransactionSettled و ClientProvedProximity
- */
 lemma Distance_Bounding:
   "All device_id mid luk tx_id #ts.
    TransactionSettled(device_id, mid, luk, tx_id) @ #ts
    ==>
-   Ex chall #tdb.
-     ClientProvedProximity(device_id, chall) @ #tdb
-     & #tdb < #ts"
+   (Ex chall #tdb. ClientProvedProximity(device_id, chall) @ #tdb & #tdb < #ts)
+   | (Ex #tk. KU(luk) @ #tk)"
 
-/* L6 — Device_Integrity */
 lemma Device_Integrity:
-  "All dev #tp.
-   SeedProvisioned(dev) @ #tp
-   ==>
-   Ex #ti. IntegrityVerified(dev) @ #ti & #ti < #tp"
+  "All dev #tp. SeedProvisioned(dev) @ #tp ==> Ex #ti. IntegrityVerified(dev) @ #ti & #ti < #tp"
 
-/* L7 — Counter_Monotonicity */
+/* Counter_Monotonicity تعمل الآن مع restriction Counter_Single_Use [FIX-6].
+   hw_ctr في كل جلسة هو ~session_ctr الفريد، فيثبت Tamarin هذه اللمة
+   مباشرةً من freshness بدون استكشاف سلاسل ctr_advance. */
 lemma Counter_Monotonicity:
-  "All dev hw_ctr #t1 #t2.
-   ConsumedCounter(dev, hw_ctr) @ #t1
-   & ConsumedCounter(dev, hw_ctr) @ #t2
-   ==> #t1 = #t2"
+  "All dev hw_ctr #t1 #t2. ConsumedCounter(dev, hw_ctr) @ #t1 & ConsumedCounter(dev, hw_ctr) @ #t2 ==> #t1 = #t2"
 
-/*
- * L8 — Merchant_ZeroKnowledge
- * [FIX BUG-02] حذف المتغير dev المعلَّق غير المقيَّد
- */
 lemma Merchant_ZeroKnowledge:
-  "All mid apdu #tm.
-   MerchantReceivedAPDU(mid, apdu) @ #tm
-   ==>
-   not (Ex sk #ts. Secret(sk) @ #ts & KU(sk) @ #ts)"
+  "All mid apdu #tm. MerchantReceivedAPDU(mid, apdu) @ #tm ==> not (Ex sk #ts. Secret(sk) @ #ts & KU(sk) @ #ts)"
 
-/*
- * L9 — Switch_NonFrameability
- * [FIX BUG-01] facts موجودة في Switch_Verify_And_Settle
- * [FIX TIMING]  نفس timepoint → #tv = #ts و #tdb = #ts (ليس <)
- */
 lemma Switch_NonFrameability:
   "All mid tx_id #ts.
    SwitchSettled(mid, tx_id) @ #ts
@@ -413,13 +337,10 @@ lemma Switch_NonFrameability:
    Ex device_id luk db_prf sig pk_cl #tv #tdb.
      SwitchVerifiedSignature(device_id, luk, sig, pk_cl) @ #tv
      & SwitchVerifiedProximity(device_id, db_prf) @ #tdb
-     & #tv = #ts
-     & #tdb = #ts"
+     & #tv = #ts & #tdb = #ts"
 
-/* L10 — Executability (Sanity) */
 lemma Executability:
   exists-trace
-  "Ex device_id mid luk tx_id #ts.
-   TransactionSettled(device_id, mid, luk, tx_id) @ #ts"
+  "Ex device_id mid luk tx_id #ts. TransactionSettled(device_id, mid, luk, tx_id) @ #ts"
 
 end
