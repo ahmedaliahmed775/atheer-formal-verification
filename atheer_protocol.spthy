@@ -1,10 +1,8 @@
 /*
  * ============================================================================
- * ATHEER PROTOCOL v3.0 — FORMAL SECURITY MODEL (HIGHLY OPTIMIZED)
+ * ATHEER PROTOCOL v3.1 — FORMAL SECURITY MODEL (HIGHLY OPTIMIZED)
  * ============================================================================
- * [FIX-8] إزالة المعادلات المخصصة (Custom Equations) لتفادي التعليق اللانهائي 
- * في مرحلة (Saturating Sources).
- * تم الانتقال إلى المطابقة النمطية والدوال المدمجة في Tamarin.
+ * [FIX-9] إزالة الدوال المجهولة من مدخلات المهاجم In() لمنع التعليق.
  * ============================================================================
  */
 
@@ -63,9 +61,10 @@ rule Client_Attest_And_KeyGen:
   , Out(<~device_id, pk(~sk), play_integrity_token(~device_id, pk(~sk))>) ]
 
 rule Switch_Verify_And_Register:
-  /* المطابقة النمطية لدالة play_integrity_token مباشرة تمنع التعليق اللانهائي */
-  [ In(<device_id, pk_client, play_integrity_token(device_id, pk_client)>), Fr(~client_id) ]
-  --[ IntegrityVerified(device_id)
+  /* [FIX] نستقبل الرمز كمتغير عام 'token' بدلاً من نمط دالة، ثم نتحقق بالأسفل */
+  [ In(<device_id, pk_client, token>), Fr(~client_id) ]
+  --[ Eq(token, play_integrity_token(device_id, pk_client))
+    , IntegrityVerified(device_id)
     , SwitchRegisteredClient(~client_id, device_id, pk_client) ]->
   [ !DeviceAttested(device_id)
   , !Switch_Registry(~client_id, device_id, pk_client) ]
@@ -85,7 +84,6 @@ rule Switch_Provision_Seed:
   --[ SeedProvisioned(device_id)
     , SwitchIssuedSeed(~seed_id, cid, ~master_seed) ]->
   [ !Seed_Registry(~seed_id, cid, ~master_seed)
-  /* استخدام aenc المدمجة بدلاً من seed_encrypt المخصصة */
   , SeedDelivery(device_id, aenc(~master_seed, pk_client)) ]
 
 rule Client_Seal_Seed:
@@ -175,7 +173,6 @@ rule Merchant_Send_ChargeRequest:
 
 rule Switch_Verify_And_Settle:
   let
-    /* نقلنا derive_luk هنا للحد من فضاء البحث */
     luk       = derive_luk(master_seed, hw_ctr_pabc)
     apdu_in   = <luk, amount, atc, hw_ctr_pabc, nonce_pabc, pabc_sig, db_prf>
     pabc_data = pabc_construct(luk, nonce_pabc, hw_ctr_pabc, amount, mid, db_prf)
