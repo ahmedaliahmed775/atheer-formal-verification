@@ -1,8 +1,10 @@
 /*
  * ============================================================================
- * ATHEER PROTOCOL v3.1 — FORMAL SECURITY MODEL (HIGHLY OPTIMIZED)
+ * ATHEER PROTOCOL v3.2 — FORMAL SECURITY MODEL (HIGHLY OPTIMIZED)
  * ============================================================================
- * [FIX-9] إزالة الدوال المجهولة من مدخلات المهاجم In() لمنع التعليق.
+ * [FIX-10] الفصل التام بين الاستقبال (In) والتحقق (Eq) لجميع الدوال المخصصة
+ * مثل play_integrity_token و derive_luk لتفادي الانفجار في مساحة البحث
+ * وتجنب التعليق اللانهائي في (Saturating Sources).
  * ============================================================================
  */
 
@@ -61,7 +63,7 @@ rule Client_Attest_And_KeyGen:
   , Out(<~device_id, pk(~sk), play_integrity_token(~device_id, pk(~sk))>) ]
 
 rule Switch_Verify_And_Register:
-  /* [FIX] نستقبل الرمز كمتغير عام 'token' بدلاً من نمط دالة، ثم نتحقق بالأسفل */
+  /* [تحسين] نستقبل الرمز كمتغير حر (token) ونتحقق منه في قسم Actions */
   [ In(<device_id, pk_client, token>), Fr(~client_id) ]
   --[ Eq(token, play_integrity_token(device_id, pk_client))
     , IntegrityVerified(device_id)
@@ -87,7 +89,7 @@ rule Switch_Provision_Seed:
   , SeedDelivery(device_id, aenc(~master_seed, pk_client)) ]
 
 rule Client_Seal_Seed:
-  /* فك التشفير يتم فورياً هنا عبر المطابقة النمطية لضمان سلامة المصدر */
+  /* الدالة المدمجة aenc لا تسبب مشكلة، المحرك يفهمها فوراً */
   [ AwaitingSeed(device_id)
   , SeedDelivery(device_id, aenc(master_seed, pk(sk_tee)))
   , !TEE_PrivKey(device_id, sk_tee) ]
@@ -173,9 +175,9 @@ rule Merchant_Send_ChargeRequest:
 
 rule Switch_Verify_And_Settle:
   let
-    luk       = derive_luk(master_seed, hw_ctr_pabc)
-    apdu_in   = <luk, amount, atc, hw_ctr_pabc, nonce_pabc, pabc_sig, db_prf>
-    pabc_data = pabc_construct(luk, nonce_pabc, hw_ctr_pabc, amount, mid, db_prf)
+    /* [تحسين] استقبال luk_in كمتغير حر بدلاً من فرض الدالة derive_luk داخل In */
+    apdu_in   = <luk_in, amount, atc, hw_ctr_pabc, nonce_pabc, pabc_sig, db_prf>
+    pabc_data = pabc_construct(luk_in, nonce_pabc, hw_ctr_pabc, amount, mid, db_prf)
   in
   [ In(< apdu_in, mid, nonce_cr, merch_sig >)
   , !Switch_Registry(client_id, device_id, pk_cl)
@@ -184,11 +186,13 @@ rule Switch_Verify_And_Settle:
   , Fr(~tx_id) ]
   --[ Eq(verify(merch_sig, h(apdu_in), pk_merch), true)
     , Eq(verify(pabc_sig, pabc_data, pk_cl), true)
-    , ConsumedLUK(luk)
+    /* نتحقق من صحة اشتقاق LUK هنا */
+    , Eq(luk_in, derive_luk(master_seed, hw_ctr_pabc))
+    , ConsumedLUK(luk_in)
     , SwitchAcceptedNonce(nonce_pabc)
-    , TransactionSettled(device_id, mid, luk, ~tx_id)
+    , TransactionSettled(device_id, mid, luk_in, ~tx_id)
     , TransactionSettled_Mid(mid, ~tx_id)
-    , SwitchVerifiedSignature(device_id, luk, pabc_sig, pk_cl)
+    , SwitchVerifiedSignature(device_id, luk_in, pabc_sig, pk_cl)
     , SwitchVerifiedProximity(device_id, db_prf)
     , SwitchSettled(mid, ~tx_id)
     ]->
