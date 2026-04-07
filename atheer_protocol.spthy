@@ -198,22 +198,29 @@ rule Client_DB_Response:
 /* [FIX-1] حذف إنتاج HW_Counter(device_id, ctr_advance(hw_ctr)) من نهاية
    هذه القاعدة. العداد hw_ctr الآن هو ~session_ctr الفريد من Biometric_Auth،
    ولا حاجة لإعادة إنتاجه — الاستمرارية تتحقق عبر Fr في كل جلسة جديدة.
-   PendingExpiry أُبقي لضمان تطبيق restriction Session_Must_Expire. */
+   PendingExpiry أُبقي لضمان تطبيق restriction Session_Must_Expire.
+   
+   [FIX-7] استبدال 'STORE_001' الثابت بـ merchant_id الفعلي القادم من
+   MerchantWaiting_DB. كان التناقض بين 'STORE_001' هنا وبين استخدام
+   المتغير mid في Switch_Verify_And_Settle يجعل verify(pabc_sig, pabc_data, pk_cl)
+   يفشل دائماً → لا يوجد trace → Executability: falsified.
+   الحل: تمرير merchant_id من ClientProximate حتى يتطابق مع mid في Settle. */
 rule Client_Send_APDU:
   let
     master_seed_val = seed_decrypt(seed_enc, sk_tee)
     luk             = derive_luk(master_seed_val, hw_ctr)
     db_proof        = db_response(chall, sk_tee)
-    pabc_data       = pabc_construct(luk, ~n, hw_ctr, '100', 'STORE_001', db_proof)
+    pabc_data       = pabc_construct(luk, ~n, hw_ctr, '100', merchant_id, db_proof)
     pabc_sig        = sign(pabc_data, sk_tee)
     apdu            = <luk, '100', ~atc, hw_ctr, ~n, pabc_sig, db_proof>
   in
   [ ClientProximate(device_id, session_id, hw_ctr, chall, db_proof)
   , !TEE_MasterSeed(device_id, seed_enc)
   , !TEE_PrivKey(device_id, sk_tee)
+  , !Merchant_PubKey(merchant_id, pk_merch)
   , Fr(~n), Fr(~atc) ]
-  --[ ClientSentAPDU(device_id, session_id, luk, ~n, '100', 'STORE_001')
-    , PABCGenerated(device_id, session_id, luk, ~n, hw_ctr, '100', 'STORE_001')
+  --[ ClientSentAPDU(device_id, session_id, luk, ~n, '100', merchant_id)
+    , PABCGenerated(device_id, session_id, luk, ~n, hw_ctr, '100', merchant_id)
     , ConsumedCounter(device_id, hw_ctr)
     , Secret(sk_tee) ]->
   [ PendingExpiry(session_id)
